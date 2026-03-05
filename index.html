@@ -1,0 +1,2655 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>لوحة المؤشرات الاقتصادية والاجتماعية</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-page: #f5f6fa;
+  --bg-panel: #ffffff;
+  --border-color: #e2e5ec;
+  --primary: #006633;
+  --primary-light: #e8f5ee;
+  --accent: #c8a951;
+  --positive: #2e7d32;
+  --negative: #c62828;
+  --text-primary: #1a1a2e;
+  --text-secondary: #64748b;
+  --text-disabled: #bdc1c6;
+  --bg-disabled: #f1f3f4;
+  --font-main: 'Tajawal', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.1);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+  --transition: 200ms ease;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-main);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* ===== TAB NAVIGATION ===== */
+.tab-nav {
+  display: flex;
+  background: var(--primary);
+  padding: 0 var(--spacing-lg);
+  height: 56px;
+  align-items: center;
+  gap: var(--spacing-md);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  position: relative;
+  z-index: 200;
+}
+
+.tab-nav-title {
+  color: #fff;
+  font-weight: 800;
+  font-size: 16px;
+  margin-left: var(--spacing-xl);
+  white-space: nowrap;
+}
+
+.tab-nav-title .accent { color: var(--accent); }
+
+.tab-btn {
+  height: 56px;
+  padding: 0 20px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.7);
+  font-family: var(--font-main);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  position: relative;
+  transition: color var(--transition);
+}
+
+.tab-btn:hover { color: #fff; }
+
+.tab-btn.active {
+  color: #fff;
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+}
+
+.tab-nav-spacer { flex: 1; }
+
+.tab-nav-date {
+  color: rgba(255,255,255,0.6);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.print-btn {
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  border-radius: var(--radius);
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.print-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* ===== LOADING SCREEN ===== */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255,255,255,0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  transition: opacity 0.3s;
+}
+
+.loading-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid var(--border-color);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-text {
+  margin-top: var(--spacing-md);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.loading-sub {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== TAB CONTENT ===== */
+.tab-content {
+  display: none;
+  height: calc(100vh - 56px);
+  overflow: hidden;
+}
+
+.tab-content.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ===== EXECUTIVE TAB ===== */
+#executiveTab {
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+}
+
+.exec-section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.exec-section-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--primary);
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 2px solid var(--primary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/* KPI Cards */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.kpi-card {
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md) var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+  border-right: 4px solid var(--primary);
+  transition: box-shadow var(--transition), transform var(--transition);
+  cursor: pointer;
+}
+
+.kpi-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.kpi-card-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.kpi-card-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  direction: ltr;
+  text-align: right;
+}
+
+.kpi-card-change {
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 4px;
+  direction: ltr;
+  text-align: right;
+}
+
+.kpi-card-change.positive { color: var(--positive); }
+.kpi-card-change.negative { color: var(--negative); }
+
+.kpi-card-period {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.kpi-card-spark {
+  height: 40px;
+  margin-top: var(--spacing-xs);
+}
+
+/* Executive Charts */
+.exec-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.exec-chart-card {
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.exec-chart-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.exec-chart-container {
+  height: 300px;
+  width: 100%;
+}
+
+/* Analysis Section */
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.analysis-card {
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+  border-right: 3px solid var(--accent);
+}
+
+.analysis-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.analysis-card-text {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+/* ===== DETAILED TAB ===== */
+#detailedTab {
+  flex-direction: row;
+  height: calc(100vh - 56px);
+}
+
+/* Left Panel */
+.left-panel {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  transition: min-width var(--transition), width var(--transition);
+  overflow: hidden;
+  position: relative;
+  z-index: 10;
+}
+
+.left-panel.collapsed { width: 48px; min-width: 48px; }
+.left-panel.collapsed .panel-content { display: none; }
+.left-panel.collapsed .collapse-btn .collapse-icon { transform: rotate(180deg); }
+
+.collapse-btn {
+  position: absolute;
+  top: 12px;
+  left: 8px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: background var(--transition);
+}
+
+.collapse-btn:hover { background: var(--bg-disabled); }
+
+.collapse-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--transition);
+}
+
+.panel-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: 48px;
+}
+
+.panel-search {
+  padding: var(--spacing-xs) var(--spacing-md);
+}
+
+.panel-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: var(--font-main);
+  outline: none;
+  direction: rtl;
+}
+
+.panel-search input:focus { border-color: var(--primary); }
+
+.series-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-xs) 0;
+}
+
+.series-group-header {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-color);
+  margin-top: 8px;
+}
+
+.series-group-header:first-child { margin-top: 0; }
+
+.series-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 10px var(--spacing-md);
+  cursor: pointer;
+  border-right: 3px solid transparent;
+  transition: all var(--transition);
+}
+
+.series-item:hover { background: var(--bg-page); }
+
+.series-item.active {
+  border-right-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.series-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.series-item-info { min-width: 0; flex: 1; }
+
+.series-item-mnemonic {
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.series-item-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Right Panel */
+.right-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Entry Screen */
+.entry-screen {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+}
+
+.entry-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: var(--spacing-md);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.summary-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition);
+}
+
+.summary-card:hover { box-shadow: var(--shadow-md); }
+
+.summary-card-name { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+.summary-card-unit { font-size: 11px; color: var(--text-secondary); margin-bottom: var(--spacing-xs); }
+
+.summary-card-value {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  direction: ltr;
+  text-align: right;
+}
+
+.summary-card-change {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  margin-bottom: var(--spacing-xs);
+  direction: ltr;
+  text-align: right;
+}
+
+.summary-card-change.positive { color: var(--positive); }
+.summary-card-change.negative { color: var(--negative); }
+
+.summary-section-header {
+  grid-column: 1 / -1;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 12px 0 4px;
+  border-bottom: 2px solid var(--border-color);
+  margin-top: 8px;
+}
+
+.summary-section-header:first-child { margin-top: 0; }
+
+.summary-sparkline { width: 100%; height: 60px; }
+
+/* Detail View */
+.detail-view {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-view.visible { display: flex; }
+
+.detail-header {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.back-btn {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 0;
+  margin-bottom: 4px;
+  font-family: var(--font-main);
+}
+
+.back-btn:hover { text-decoration: underline; }
+.detail-view.visible .back-btn { display: inline-flex; }
+
+.detail-mnemonic { font-weight: 700; font-size: 18px; }
+.detail-description { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+.detail-unit { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+
+.detail-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-xs);
+}
+
+.detail-last-value {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  direction: ltr;
+}
+
+.detail-change {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  direction: ltr;
+}
+
+.detail-change.positive { color: var(--positive); }
+.detail-change.negative { color: var(--negative); }
+
+.detail-period { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+/* Controls */
+.detail-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.control-group { display: flex; align-items: center; gap: 4px; }
+
+.control-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.ctrl-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-family: var(--font-main);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.ctrl-btn:hover:not(.active):not(:disabled) { background: var(--bg-page); }
+
+.ctrl-btn.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.ctrl-btn:disabled {
+  background: var(--bg-disabled);
+  color: var(--text-disabled);
+  cursor: default;
+  border-color: var(--bg-disabled);
+}
+
+.date-input {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-family: var(--font-main);
+  outline: none;
+}
+
+.date-input:focus { border-color: var(--primary); }
+
+.compare-wrap { position: relative; }
+
+.compare-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 50;
+  min-width: 220px;
+}
+
+.compare-dropdown.open { display: block; }
+
+.compare-option {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background var(--transition);
+}
+
+.compare-option:hover { background: var(--bg-page); }
+
+.comparison-indicator {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.comparison-indicator.visible { display: flex; }
+
+.remove-compare {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--negative);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dual-axis-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.dual-axis-toggle input { cursor: pointer; }
+
+/* Scrollable content */
+.detail-content { flex: 1; min-height: 0; overflow-y: auto; }
+
+.detail-chart-area {
+  height: 400px;
+  padding: var(--spacing-md) var(--spacing-lg);
+}
+
+.chart-container { width: 100%; height: 100%; }
+
+/* Data Table */
+.detail-table-area { border-top: 1px solid var(--border-color); }
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table thead { position: sticky; top: 0; z-index: 2; }
+
+.data-table th {
+  background: var(--bg-panel);
+  border-bottom: 2px solid var(--border-color);
+  padding: 8px 16px;
+  text-align: right;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.data-table th.val-col { text-align: left; font-family: var(--font-mono); }
+
+.data-table td {
+  padding: 6px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  height: 32px;
+}
+
+.data-table tr:nth-child(even) td { background: #fafafa; }
+.data-table tr:nth-child(odd) td { background: #fff; }
+
+.data-table td.period-col {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  direction: ltr;
+  text-align: right;
+}
+
+.data-table td.val-col {
+  font-family: var(--font-mono);
+  text-align: left;
+  direction: ltr;
+}
+
+.data-table tr.forecast-row td { color: #9aa0a6; font-style: italic; }
+
+/* ===== MOBILE ===== */
+.mobile-fab {
+  display: none;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  box-shadow: var(--shadow-lg);
+  font-size: 20px;
+  cursor: pointer;
+  z-index: 90;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 95;
+}
+
+.mobile-backdrop.open { display: block; }
+
+@media (max-width: 767px) {
+  .left-panel {
+    position: fixed;
+    right: -300px;
+    top: 56px;
+    bottom: 0;
+    z-index: 100;
+    transition: right var(--transition);
+    width: 280px;
+    min-width: 280px;
+  }
+  .left-panel.mobile-open { right: 0; }
+  .collapse-btn { display: none; }
+  .mobile-fab { display: flex; }
+  .panel-content { padding-top: 12px; }
+  .detail-chart-area { height: 300px; }
+  .ctrl-btn { height: 40px; }
+  .date-input { height: 40px; }
+  .exec-charts-grid { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .analysis-grid { grid-template-columns: 1fr; }
+  .tab-nav-title { font-size: 13px; }
+  .tab-nav { padding: 0 var(--spacing-sm); }
+}
+
+@media (min-width: 768px) {
+  .mobile-close-btn { display: none !important; }
+}
+
+/* Scrollbar */
+.series-list::-webkit-scrollbar,
+.detail-content::-webkit-scrollbar,
+.entry-screen::-webkit-scrollbar,
+#executiveTab::-webkit-scrollbar {
+  width: 6px;
+}
+.series-list::-webkit-scrollbar-thumb,
+.detail-content::-webkit-scrollbar-thumb,
+.entry-screen::-webkit-scrollbar-thumb,
+#executiveTab::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+/* ===== CUSTOM REPORT TAB ===== */
+#customTab {
+  flex-direction: row;
+  height: calc(100vh - 56px);
+}
+
+.custom-report-wrapper {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.custom-selector-panel {
+  width: 320px;
+  min-width: 320px;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+}
+
+.custom-selector-header {
+  padding: var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.custom-selector-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: var(--spacing-xs);
+  color: var(--primary);
+}
+
+.custom-search {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: var(--font-main);
+  outline: none;
+  direction: rtl;
+}
+
+.custom-search:focus { border-color: var(--primary); }
+
+.custom-selector-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-xs) 0;
+}
+
+.custom-group-header {
+  padding: 10px var(--spacing-md) 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.custom-group-header:hover { background: var(--bg-page); }
+
+.custom-group-check {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.custom-series-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 8px var(--spacing-md) 8px 28px;
+  cursor: pointer;
+  transition: background var(--transition);
+  font-size: 13px;
+}
+
+.custom-series-item:hover { background: var(--bg-page); }
+
+.custom-series-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.custom-series-item.checked {
+  background: var(--primary-light);
+}
+
+.custom-selector-footer {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+}
+
+.custom-selected-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.custom-generate-btn {
+  height: 38px;
+  padding: 0 24px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-main);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity var(--transition);
+}
+
+.custom-generate-btn:hover { opacity: 0.9; }
+
+.custom-report-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+  min-width: 0;
+}
+
+.custom-report-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+}
+
+@media (max-width: 767px) {
+  .custom-report-wrapper { flex-direction: column; }
+  .custom-selector-panel { width: 100%; min-width: 100%; max-height: 40vh; }
+  .custom-report-area { padding: var(--spacing-md); }
+}
+
+/* Print styles */
+@media print {
+  .tab-nav { background: var(--primary) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #executiveTab { overflow: visible; height: auto; }
+  .kpi-card, .exec-chart-card, .analysis-card { break-inside: avoid; }
+  .print-btn { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">جاري تحميل البيانات...</div>
+  <div class="loading-sub" id="loadingStatus">الاتصال بقاعدة البيانات</div>
+</div>
+
+<!-- Tab Navigation -->
+<nav class="tab-nav">
+  <div class="tab-nav-title">لوحة المؤشرات <span class="accent">الاقتصادية والاجتماعية</span></div>
+  <button class="tab-btn active" data-tab="executiveTab">الملخص التنفيذي</button>
+  <button class="tab-btn" data-tab="detailedTab">التحليل التفصيلي</button>
+  <button class="tab-btn" data-tab="customTab">تقرير مخصص</button>
+  <div class="tab-nav-spacer"></div>
+  <div class="tab-nav-date" id="navDate"></div>
+  <button class="print-btn" id="printBtn" title="تصدير PDF">تصدير PDF</button>
+</nav>
+
+<!-- ===== EXECUTIVE TAB ===== -->
+<div class="tab-content active" id="executiveTab">
+  <!-- KPI Section -->
+  <div class="exec-section">
+    <div class="exec-section-title">المؤشرات الرئيسية</div>
+    <div class="kpi-grid" id="kpiGrid"></div>
+  </div>
+
+  <!-- Charts Section -->
+  <div class="exec-section">
+    <div class="exec-section-title">الاتجاهات والتحولات</div>
+    <div class="exec-charts-grid" id="execChartsGrid"></div>
+  </div>
+
+  <!-- Analysis Section -->
+  <div class="exec-section">
+    <div class="exec-section-title">القراءة الاقتصادية</div>
+    <div class="analysis-grid" id="analysisGrid"></div>
+  </div>
+</div>
+
+<!-- ===== DETAILED TAB ===== -->
+<div class="tab-content" id="detailedTab">
+  <!-- Left Panel -->
+  <div class="left-panel" id="leftPanel">
+    <button class="collapse-btn" id="collapseBtn" title="طي/فتح">
+      <svg class="collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </svg>
+    </button>
+    <div class="panel-content">
+      <div class="panel-search">
+        <input type="text" id="searchInput" placeholder="بحث في المؤشرات...">
+      </div>
+      <div class="series-list" id="seriesList"></div>
+    </div>
+  </div>
+
+  <!-- Right Panel -->
+  <div class="right-panel" id="rightPanel">
+    <!-- Entry Screen -->
+    <div class="entry-screen" id="entryScreen">
+      <div class="entry-title">جميع المؤشرات</div>
+      <div class="summary-grid" id="summaryGrid"></div>
+    </div>
+
+    <!-- Detail View -->
+    <div class="detail-view" id="detailView">
+      <div class="detail-header">
+        <button class="back-btn" id="backBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          كل المؤشرات
+        </button>
+        <div class="detail-mnemonic" id="detailMnemonic"></div>
+        <div class="detail-description" id="detailDescription"></div>
+        <div class="detail-unit" id="detailUnit"></div>
+        <div class="detail-value-row">
+          <span class="detail-last-value" id="detailLastValue"></span>
+          <span class="detail-change" id="detailChange"></span>
+        </div>
+        <div class="detail-period" id="detailPeriod"></div>
+      </div>
+
+      <div class="detail-controls">
+        <div class="control-group">
+          <span class="control-label">التكرار:</span>
+          <button class="ctrl-btn" data-freq="monthly">شهري</button>
+          <button class="ctrl-btn" data-freq="quarterly">ربعي</button>
+          <button class="ctrl-btn" data-freq="annual">سنوي</button>
+        </div>
+        <div class="control-group">
+          <button class="ctrl-btn active" data-transform="level">القيمة</button>
+          <button class="ctrl-btn" data-transform="yoy">سنوي%</button>
+          <button class="ctrl-btn" data-transform="qoq">ربعي%</button>
+          <button class="ctrl-btn" data-transform="index">مؤشر</button>
+          <button class="ctrl-btn" data-transform="ytd">تراكمي</button>
+        </div>
+        <div class="control-group">
+          <span class="control-label">من:</span>
+          <input type="month" class="date-input" id="dateFrom">
+          <span class="control-label">إلى:</span>
+          <input type="month" class="date-input" id="dateTo">
+        </div>
+        <div class="control-group">
+          <button class="ctrl-btn" id="forecastBtn">توقعات</button>
+        </div>
+        <div class="control-group compare-wrap">
+          <button class="ctrl-btn" id="compareBtn">+ مقارنة</button>
+          <div class="compare-dropdown" id="compareDropdown"></div>
+        </div>
+        <div class="comparison-indicator" id="comparisonIndicator">
+          <span id="comparisonName"></span>
+          <div class="dual-axis-toggle">
+            <input type="checkbox" id="dualAxisCheck">
+            <label for="dualAxisCheck">محورين</label>
+          </div>
+          <button class="remove-compare" id="removeCompare" title="إزالة المقارنة">&times;</button>
+        </div>
+      </div>
+
+      <div class="detail-content">
+        <div class="detail-chart-area">
+          <div class="chart-container" id="mainChart"></div>
+        </div>
+        <div class="detail-table-area">
+          <table class="data-table" id="dataTable">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CUSTOM REPORT TAB ===== -->
+<div class="tab-content" id="customTab">
+  <div class="custom-report-wrapper">
+    <!-- Selector Panel -->
+    <div class="custom-selector-panel">
+      <div class="custom-selector-header">
+        <h3>اختر المؤشرات</h3>
+        <input type="text" id="customSearchInput" class="custom-search" placeholder="بحث...">
+      </div>
+      <div class="custom-selector-list" id="customSelectorList"></div>
+      <div class="custom-selector-footer">
+        <span class="custom-selected-count" id="customSelectedCount">0 مؤشر محدد</span>
+        <button class="custom-generate-btn" id="customGenerateBtn">عرض التقرير</button>
+      </div>
+    </div>
+
+    <!-- Report Area -->
+    <div class="custom-report-area" id="customReportArea">
+      <div class="custom-report-empty" id="customReportEmpty">
+        <div style="font-size:48px;opacity:0.3;margin-bottom:16px">&#128202;</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:8px">اختر مؤشرات من القائمة</div>
+        <div style="font-size:14px;color:var(--text-secondary)">حدد مؤشراً واحداً أو أكثر ثم اضغط "عرض التقرير"</div>
+      </div>
+      <div class="custom-report-content" id="customReportContent" style="display:none">
+        <div class="exec-section">
+          <div class="exec-section-title">المؤشرات المختارة</div>
+          <div class="kpi-grid" id="customKpiGrid"></div>
+        </div>
+        <div class="exec-section">
+          <div class="exec-section-title">الرسوم البيانية</div>
+          <div class="exec-charts-grid" id="customChartsGrid"></div>
+        </div>
+        <div class="exec-section">
+          <div class="exec-section-title">القراءة الاقتصادية</div>
+          <div class="analysis-grid" id="customAnalysisGrid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile FAB -->
+<button class="mobile-fab" id="mobileFab">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+</button>
+<div class="mobile-backdrop" id="mobileBackdrop"></div>
+
+<script>
+// ============================================================
+//  CONSTANTS & CONFIG
+// ============================================================
+const WORKER_URL = 'https://patient-sunset-47a2.mr-alshabanat.workers.dev';
+const PALETTE = ['#006633','#c62828','#1565c0','#f9a825','#6a1b9a','#00838f','#e65100','#2e7d32','#ad1457','#4527a0','#00695c','#bf360c'];
+const FREQ_ORDER = { monthly: 0, quarterly: 1, annual: 2 };
+
+// Executive KPI config - matches database titles to key indicators
+const EXEC_KPI_CONFIG = [
+  { dbMatch: 'GDP_Data', col: 'الناتج المحلي الاجمالي', label: 'الناتج المحلي الإجمالي', unit: 'مليون ريال' },
+  { dbMatch: 'GDP_Data', col: 'الانشطة الغير نفطية', label: 'الأنشطة غير النفطية', unit: 'مليون ريال' },
+  { dbMatch: 'Index Series by Expenditure Category', col: 'الرقم القياسي العام', label: 'مؤشر أسعار المستهلك', unit: 'نقطة (2023=100)' },
+  { dbMatch: 'Real Estate Price Index', col: 'الرقم القياسي', label: 'مؤشر أسعار العقارات', unit: 'نقطة' },
+  { dbMatch: 'Construction Cost Index', col: 'General Index', label: 'مؤشر تكاليف البناء', unit: 'نقطة' },
+  { dbMatch: 'Active Social Insurance Subscribers', col: 'الاجمالي', label: 'مشتركي التأمينات الاجتماعية', unit: 'مشترك' },
+  { dbMatch: 'CONSUMER', col: 'القروض الاستهلاكية والبطاقات الائتمانية', label: 'القروض الاستهلاكية', unit: 'مليون ريال' },
+  { dbMatch: 'Real Estate Loans by Banks', col: 'الاجمالي', label: 'القروض العقارية - بنوك', unit: 'مليون ريال' },
+  { dbMatch: 'Residential New Mortgages Finance For Individuals Provided by Banks', col: 'Total', label: 'التمويل العقاري الجديد - بنوك', unit: 'مليون ريال' },
+  { dbMatch: 'Residential New Mortgages Finance For Individuals Provided by Finance Companies', col: 'Total', label: 'التمويل العقاري الجديد - شركات التمويل', unit: 'مليون ريال' },
+];
+
+// Executive chart config
+const EXEC_CHARTS_CONFIG = [
+  {
+    title: 'مكونات الناتج المحلي الإجمالي',
+    dbMatch: 'GDP_Data',
+    series: [
+      { col: 'الانشطة النفطية', label: 'الأنشطة النفطية', color: '#1565c0' },
+      { col: 'الانشطة الغير نفطية', label: 'الأنشطة غير النفطية', color: '#2e7d32' },
+      { col: 'صافي الضرائب على المنتجات', label: 'صافي الضرائب', color: '#f9a825' },
+    ],
+    type: 'bar',
+    stacked: true
+  },
+  {
+    title: 'مؤشر أسعار المستهلك (التضخم)',
+    dbMatch: 'Index Series by Expenditure Category',
+    series: [
+      { col: 'الرقم القياسي العام', label: 'المؤشر العام', color: '#c62828' },
+    ],
+    type: 'line'
+  },
+  {
+    title: 'مؤشرات سوق العقارات',
+    dbMatch: 'Real Estate Price Index',
+    series: [
+      { col: 'الرقم القياسي', label: 'المؤشر العام', color: '#6a1b9a' },
+      { col: 'جملة السكني ', label: 'السكني', color: '#1565c0' },
+      { col: 'جملة تجاري', label: 'التجاري', color: '#e65100' },
+    ],
+    type: 'line'
+  },
+  {
+    title: 'المشتركين في التأمينات الاجتماعية',
+    dbMatch: 'Active Social Insurance Subscribers',
+    series: [
+      { col: 'سعودي - الاجمالي', label: 'سعودي', color: '#2e7d32' },
+      { col: 'غير سعودي - الاجمالي', label: 'غير سعودي', color: '#1565c0' },
+    ],
+    type: 'line'
+  },
+];
+
+// ============================================================
+//  APP STATE
+// ============================================================
+const AppState = {
+  series: [],
+  rawDatabases: {},  // dbId -> { title, rows, properties }
+  activeSeries: null,
+  comparisonSeries: null,
+  dualAxis: false,
+  frequency: 'quarterly',
+  transformation: 'level',
+  dateRange: { start: null, end: null },
+  forecastEnabled: false,
+  currentTab: 'executiveTab',
+};
+
+let mainChartInstance = null;
+const sparklineInstances = {};
+const execChartInstances = {};
+
+// ============================================================
+//  DATA UTILITIES
+// ============================================================
+function formatNumber(val, decimals = 2) {
+  if (val == null || isNaN(val)) return '';
+  const parts = Number(val).toFixed(decimals).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return parts.join('.');
+}
+
+function isPercentTransform() {
+  return AppState.transformation === 'yoy' || AppState.transformation === 'qoq';
+}
+
+function formatValue(val, decimals = 2) {
+  const num = formatNumber(val, decimals);
+  if (!num) return num;
+  return isPercentTransform() ? num + '%' : num;
+}
+
+function parsePeriod(key) {
+  if (/^\d{4}Q\d$/.test(key)) return { year: +key.slice(0, 4), quarter: +key[5], type: 'quarterly' };
+  if (/^\d{4}M\d{2}$/.test(key)) return { year: +key.slice(0, 4), month: +key.slice(5), type: 'monthly' };
+  if (/^\d{4}$/.test(key)) return { year: +key, type: 'annual' };
+  return null;
+}
+
+function periodToSortKey(key) {
+  const p = parsePeriod(key);
+  if (!p) return 0;
+  if (p.type === 'annual') return p.year * 100;
+  if (p.type === 'quarterly') return p.year * 100 + p.quarter * 3;
+  if (p.type === 'monthly') return p.year * 100 + p.month;
+  return 0;
+}
+
+function sortedPeriods(data) {
+  return Object.keys(data).sort((a, b) => periodToSortKey(a) - periodToSortKey(b));
+}
+
+function periodToMonthInput(key) {
+  const p = parsePeriod(key);
+  if (!p) return '';
+  if (p.type === 'monthly') return `${p.year}-${String(p.month).padStart(2, '0')}`;
+  if (p.type === 'quarterly') return `${p.year}-${String(p.quarter * 3 - 2).padStart(2, '0')}`;
+  if (p.type === 'annual') return `${p.year}-01`;
+  return '';
+}
+
+function monthInputToPeriodSort(val) {
+  if (!val) return null;
+  const [y, m] = val.split('-').map(Number);
+  return y * 100 + m;
+}
+
+function periodSortValue(key) {
+  const p = parsePeriod(key);
+  if (!p) return 0;
+  if (p.type === 'annual') return p.year * 100 + 1;
+  if (p.type === 'quarterly') return p.year * 100 + (p.quarter * 3 - 2);
+  if (p.type === 'monthly') return p.year * 100 + p.month;
+  return 0;
+}
+
+function getSeries(id) {
+  return AppState.series.find(s => s.id === id);
+}
+
+function getNextColor(idx) {
+  return PALETTE[idx % PALETTE.length];
+}
+
+function detectFrequency(values) {
+  const sample = String(values[0] || '').trim();
+  if (/^\d{4}[- ]?Q\d$/i.test(sample)) return 'quarterly';
+  if (/^\d{4}[- ]?M\d{2}$/i.test(sample) || /^\d{4}-\d{2}(-\d{2})?(T|$)/.test(sample)) return 'monthly';
+  if (/^\d{4}$/.test(sample)) return 'annual';
+  return 'monthly';
+}
+
+function normalizeDate(val, freq) {
+  val = String(val).trim();
+  if (val.includes('T')) val = val.split('T')[0];
+  if (freq === 'quarterly') {
+    const m = val.match(/(\d{4})[- ]?Q(\d)/i);
+    if (m) return `${m[1]}Q${m[2]}`;
+  }
+  if (freq === 'monthly') {
+    const m = val.match(/(\d{4})[- ]?M?(\d{2})(?:-\d{2})?/i);
+    if (m) return `${m[1]}M${m[2]}`;
+  }
+  if (freq === 'annual') {
+    const m = val.match(/(\d{4})/);
+    if (m) return m[1];
+  }
+  return val;
+}
+
+function extractNotionValue(prop) {
+  if (!prop) return null;
+  switch (prop.type) {
+    case 'title': return prop.title?.map(t => t.plain_text).join('') || '';
+    case 'rich_text': return prop.rich_text?.map(t => t.plain_text).join('') || '';
+    case 'number': return prop.number;
+    case 'formula':
+      if (prop.formula?.type === 'number') return prop.formula.number;
+      if (prop.formula?.type === 'string') return prop.formula.string;
+      return null;
+    case 'date': return prop.date?.start || null;
+    case 'rollup':
+      if (prop.rollup?.type === 'number') return prop.rollup.number;
+      if (prop.rollup?.type === 'array') { const first = prop.rollup.array?.[0]; if (first) return extractNotionValue(first); }
+      return null;
+    case 'select': return prop.select?.name || '';
+    default: return null;
+  }
+}
+
+// ============================================================
+//  TRANSFORMATION & AGGREGATION
+// ============================================================
+function applyTransformation(data, transform, frequency) {
+  const keys = sortedPeriods(data);
+  const result = {};
+
+  if (transform === 'level') { keys.forEach(k => result[k] = data[k]); return result; }
+
+  if (transform === 'yoy') {
+    const lookback = frequency === 'monthly' ? 12 : frequency === 'quarterly' ? 4 : 1;
+    keys.forEach((k, i) => {
+      if (i < lookback) { result[k] = null; return; }
+      const prev = data[keys[i - lookback]], cur = data[k];
+      if (prev == null || cur == null || prev === 0) { result[k] = null; return; }
+      result[k] = ((cur - prev) / Math.abs(prev)) * 100;
+    });
+    return result;
+  }
+
+  if (transform === 'qoq') {
+    keys.forEach((k, i) => {
+      if (i === 0) { result[k] = null; return; }
+      const prev = data[keys[i - 1]], cur = data[k];
+      if (prev == null || cur == null || prev === 0) { result[k] = null; return; }
+      result[k] = ((cur - prev) / Math.abs(prev)) * 100;
+    });
+    return result;
+  }
+
+  if (transform === 'index') {
+    const firstKey = keys.find(k => data[k] != null);
+    if (!firstKey) return result;
+    const base = data[firstKey];
+    if (base === 0) return result;
+    keys.forEach(k => { result[k] = data[k] == null ? null : (data[k] / base) * 100; });
+    return result;
+  }
+
+  if (transform === 'ytd') {
+    if (frequency === 'annual') { keys.forEach(k => result[k] = data[k]); return result; }
+    let cumSum = 0, currentYear = null;
+    keys.forEach(k => {
+      const p = parsePeriod(k);
+      if (!p) { result[k] = null; return; }
+      const isReset = (frequency === 'monthly' && p.month === 1) || (frequency === 'quarterly' && p.quarter === 1);
+      if (p.year !== currentYear || isReset) { cumSum = 0; currentYear = p.year; }
+      if (data[k] != null) { cumSum += data[k]; result[k] = cumSum; } else { result[k] = null; }
+    });
+    return result;
+  }
+
+  return data;
+}
+
+function aggregateData(data, nativeFreq, targetFreq, method) {
+  if (FREQ_ORDER[targetFreq] <= FREQ_ORDER[nativeFreq]) return data;
+  const keys = sortedPeriods(data);
+  const groups = {};
+  keys.forEach(k => {
+    const p = parsePeriod(k);
+    if (!p) return;
+    let groupKey;
+    if (targetFreq === 'annual') { groupKey = String(p.year); }
+    else if (targetFreq === 'quarterly') {
+      const quarter = p.type === 'monthly' ? Math.ceil(p.month / 3) : p.quarter;
+      groupKey = `${p.year}Q${quarter}`;
+    }
+    if (!groups[groupKey]) groups[groupKey] = [];
+    if (data[k] != null) groups[groupKey].push(data[k]);
+  });
+  const result = {};
+  for (const [gk, vals] of Object.entries(groups)) {
+    if (vals.length === 0) { result[gk] = null; continue; }
+    result[gk] = method === 'sum' ? vals.reduce((a, b) => a + b, 0) : vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
+  return result;
+}
+
+function computeForecast(data, periods) {
+  const keys = sortedPeriods(data);
+  const validKeys = keys.filter(k => data[k] != null);
+  if (validKeys.length < 2) return {};
+  const n = validKeys.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  validKeys.forEach((k, i) => { sumX += i; sumY += data[k]; sumXY += i * data[k]; sumX2 += i * i; });
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+  const intercept = (sumY - slope * sumX) / n;
+  const lastKey = validKeys[validKeys.length - 1];
+  const lastP = parsePeriod(lastKey);
+  const forecast = {};
+  for (let i = 1; i <= periods; i++) {
+    const val = intercept + slope * (n - 1 + i);
+    let fKey;
+    if (lastP.type === 'quarterly') { let q = lastP.quarter + i, y = lastP.year + Math.floor((q-1)/4); q = ((q-1)%4)+1; fKey = `${y}Q${q}`; }
+    else if (lastP.type === 'monthly') { let m = lastP.month + i, y = lastP.year + Math.floor((m-1)/12); m = ((m-1)%12)+1; fKey = `${y}M${String(m).padStart(2,'0')}`; }
+    else { fKey = String(lastP.year + i); }
+    forecast[fKey] = val;
+  }
+  return forecast;
+}
+
+// ============================================================
+//  NOTION DATA FETCHER (AUTO-LOAD)
+// ============================================================
+async function notionFetch(path, body) {
+  const url = WORKER_URL.replace(/\/+$/, '') + path;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) throw new Error('Notion API error: ' + res.status);
+  return res.json();
+}
+
+async function fetchAllNotionData() {
+  const statusEl = document.getElementById('loadingStatus');
+
+  // Step 1: Get all databases
+  statusEl.textContent = 'جلب قائمة الجداول...';
+  const searchData = await notionFetch('/v1/search', { filter: { property: 'object', value: 'database' } });
+  const databases = searchData.results || [];
+
+  // Step 2: Fetch data from each database in parallel batches
+  statusEl.textContent = `جلب البيانات من ${databases.length} جدول...`;
+
+  let colorIdx = 0;
+  const fetchPromises = databases.map(async (db) => {
+    const dbId = db.id;
+    const dbTitle = db.title?.map(t => t.plain_text).join('').trim() || 'Untitled';
+
+    // Get all rows with pagination
+    const allRows = [];
+    let startCursor = undefined;
+    let hasMore = true;
+    while (hasMore) {
+      const body = {};
+      if (startCursor) body.start_cursor = startCursor;
+      const data = await notionFetch('/v1/databases/' + dbId + '/query', body);
+      allRows.push(...(data.results || []));
+      hasMore = data.has_more;
+      startCursor = data.next_cursor;
+    }
+
+    if (allRows.length === 0) return;
+
+    // Extract properties
+    const propEntries = Object.entries(allRows[0].properties);
+    const rows = allRows.map(row => {
+      const rowData = {};
+      propEntries.forEach(([name]) => {
+        rowData[name] = extractNotionValue(row.properties[name]);
+      });
+      return rowData;
+    });
+
+    const properties = propEntries.map(([name, prop]) => ({ name, type: prop.type }));
+
+    AppState.rawDatabases[dbId] = { title: dbTitle, rows, properties };
+
+    // Find date column
+    const dateProp = properties.find(p => p.name.toLowerCase() === 'date') ||
+                     properties.find(p => p.type === 'date') ||
+                     properties.find(p => p.type === 'rich_text') ||
+                     properties[0];
+
+    const dateCol = dateProp.name;
+    const dateValues = rows.map(r => String(r[dateCol] || '')).filter(Boolean);
+    const freq = detectFrequency(dateValues);
+
+    // Find numeric columns
+    const numCols = properties.filter(p =>
+      p.name !== dateCol &&
+      p.name.toLowerCase() !== 'name' &&
+      p.name.toLowerCase() !== 'note' &&
+      (p.type === 'number' || p.type === 'formula')
+    );
+
+    // Create series for each numeric column
+    numCols.forEach(col => {
+      const data = {};
+      rows.forEach(row => {
+        const rawDate = String(row[dateCol] || '').trim();
+        const dateKey = normalizeDate(rawDate, freq);
+        const val = row[col.name];
+        if (dateKey && val != null && !isNaN(val)) data[dateKey] = val;
+      });
+
+      if (Object.keys(data).length === 0) return;
+
+      AppState.series.push({
+        id: col.name,
+        description: col.name,
+        unit: '',
+        nativeFrequency: freq,
+        aggregationMethod: 'sum',
+        color: getNextColor(colorIdx++),
+        data: data,
+        source: dbTitle,
+        _dbTitle: dbTitle,
+      });
+    });
+  });
+
+  await Promise.all(fetchPromises);
+
+  statusEl.textContent = `تم تحميل ${AppState.series.length} مؤشر`;
+}
+
+// ============================================================
+//  EXECUTIVE SECTION
+// ============================================================
+function findSeriesForExec(dbMatch, col) {
+  return AppState.series.find(s => s._dbTitle && s._dbTitle.includes(dbMatch) && s.id === col);
+}
+
+function renderExecutiveKPIs() {
+  const grid = document.getElementById('kpiGrid');
+  grid.innerHTML = '';
+
+  EXEC_KPI_CONFIG.forEach((cfg, idx) => {
+    const series = findSeriesForExec(cfg.dbMatch, cfg.col);
+    if (!series) return;
+
+    const periods = sortedPeriods(series.data);
+    if (periods.length === 0) return;
+
+    const lastPeriod = periods[periods.length - 1];
+    const lastVal = series.data[lastPeriod];
+
+    // Calculate YoY change
+    const lookback = series.nativeFrequency === 'monthly' ? 12 : series.nativeFrequency === 'quarterly' ? 4 : 1;
+    const prevIdx = periods.length - 1 - lookback;
+    let changeHtml = '';
+    if (prevIdx >= 0) {
+      const prevVal = series.data[periods[prevIdx]];
+      if (prevVal && prevVal !== 0) {
+        const pct = ((lastVal - prevVal) / Math.abs(prevVal)) * 100;
+        const arrow = pct >= 0 ? '\u25B2' : '\u25BC';
+        const cls = pct >= 0 ? 'positive' : 'negative';
+        changeHtml = `<div class="kpi-card-change ${cls}">${arrow} ${Math.abs(pct).toFixed(1)}% على أساس سنوي</div>`;
+      }
+    }
+
+    const sparkId = `kpi_spark_${idx}`;
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    card.innerHTML = `
+      <div class="kpi-card-label">${cfg.label}</div>
+      <div class="kpi-card-value">${formatNumber(lastVal, 0)}</div>
+      ${changeHtml}
+      <div class="kpi-card-period">${lastPeriod} | ${cfg.unit}</div>
+      <div class="kpi-card-spark" id="${sparkId}"></div>
+    `;
+
+    // Click to switch to detailed view
+    card.addEventListener('click', () => {
+      switchTab('detailedTab');
+      showDetailView(series.id);
+    });
+
+    grid.appendChild(card);
+
+    setTimeout(() => renderKpiSparkline(sparkId, series.data, series.color || PALETTE[idx % PALETTE.length]), 100);
+  });
+}
+
+function renderKpiSparkline(containerId, data, color) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const instance = echarts.init(container);
+  const keys = sortedPeriods(data);
+  const last16 = keys.slice(-16);
+  const values = last16.map(k => data[k]);
+
+  instance.setOption({
+    animation: false,
+    grid: { left: 0, right: 0, top: 2, bottom: 2 },
+    xAxis: { type: 'category', show: false, data: last16 },
+    yAxis: { type: 'value', show: false },
+    series: [{
+      type: 'line', data: values, smooth: true, symbol: 'none',
+      lineStyle: { color, width: 1.5 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: color + '30' }, { offset: 1, color: color + '05' }] } },
+    }],
+  }, true);
+
+  sparklineInstances[containerId] = instance;
+}
+
+function renderExecutiveCharts() {
+  const grid = document.getElementById('execChartsGrid');
+  grid.innerHTML = '';
+
+  EXEC_CHARTS_CONFIG.forEach((cfg, idx) => {
+    // Find matching database series
+    const matchingSeries = cfg.series.map(s => findSeriesForExec(cfg.dbMatch, s.col)).filter(Boolean);
+    if (matchingSeries.length === 0) return;
+
+    const chartId = `exec_chart_${idx}`;
+    const card = document.createElement('div');
+    card.className = 'exec-chart-card';
+    card.innerHTML = `
+      <div class="exec-chart-title">${cfg.title}</div>
+      <div class="exec-chart-container" id="${chartId}"></div>
+    `;
+    grid.appendChild(card);
+
+    setTimeout(() => {
+      const container = document.getElementById(chartId);
+      if (!container) return;
+      const instance = echarts.init(container);
+      execChartInstances[chartId] = instance;
+
+      // Use last 20 periods
+      const refSeries = matchingSeries[0];
+      let allPeriods = sortedPeriods(refSeries.data).slice(-20);
+
+      const chartSeries = [];
+      cfg.series.forEach((serCfg, i) => {
+        const s = findSeriesForExec(cfg.dbMatch, serCfg.col);
+        if (!s) return;
+        const values = allPeriods.map(k => s.data[k] != null ? Math.round(s.data[k]) : null);
+
+        chartSeries.push({
+          name: serCfg.label,
+          type: cfg.type,
+          data: values,
+          smooth: cfg.type === 'line',
+          symbol: cfg.type === 'line' ? 'circle' : 'none',
+          symbolSize: 4,
+          stack: cfg.stacked ? 'total' : undefined,
+          lineStyle: { color: serCfg.color, width: 2 },
+          itemStyle: { color: serCfg.color },
+          areaStyle: cfg.stacked ? { opacity: 0.7 } : undefined,
+        });
+      });
+
+      instance.setOption({
+        animation: true,
+        grid: { left: 60, right: 20, top: 30, bottom: 40 },
+        legend: { top: 0, textStyle: { fontFamily: 'Tajawal', fontSize: 12 } },
+        xAxis: {
+          type: 'category', data: allPeriods,
+          axisLabel: { fontSize: 11, rotate: allPeriods.length > 12 ? 45 : 0 },
+        },
+        yAxis: {
+          type: 'value',
+          axisLabel: { fontSize: 11, formatter: v => formatNumber(v, 0) },
+          splitLine: { lineStyle: { color: '#f0f0f0' } },
+        },
+        tooltip: {
+          trigger: 'axis',
+          textStyle: { fontFamily: 'Tajawal', fontSize: 12 },
+          formatter: function(params) {
+            let html = `<div style="font-weight:700;margin-bottom:4px">${params[0].axisValue}</div>`;
+            params.forEach(p => {
+              if (p.value != null) {
+                html += `<div style="display:flex;align-items:center;gap:6px;direction:rtl">
+                  <span style="width:8px;height:8px;border-radius:50%;background:${p.color};display:inline-block"></span>
+                  ${p.seriesName}: <strong>${formatNumber(p.value, 0)}</strong>
+                </div>`;
+              }
+            });
+            return html;
+          }
+        },
+        series: chartSeries,
+      });
+    }, 150);
+  });
+}
+
+function renderExecutiveAnalysis() {
+  const grid = document.getElementById('analysisGrid');
+  grid.innerHTML = '';
+
+  const analyses = [
+    { title: 'الناتج المحلي الإجمالي', dbMatch: 'GDP_Data', cols: ['الناتج المحلي الاجمالي', 'الانشطة النفطية', 'الانشطة الغير نفطية'] },
+    { title: 'التضخم وأسعار المستهلك', dbMatch: 'Index Series by Expenditure Category', cols: ['الرقم القياسي العام'] },
+    { title: 'سوق العقارات', dbMatch: 'Real Estate Price Index', cols: ['الرقم القياسي', 'جملة السكني ', 'جملة تجاري'] },
+    { title: 'سوق العمل', dbMatch: 'Active Social Insurance Subscribers', cols: ['الاجمالي', 'سعودي - الاجمالي', 'غير سعودي - الاجمالي'] },
+    { title: 'القطاع المالي', dbMatch: 'CONSUMER', cols: ['القروض الاستهلاكية والبطاقات الائتمانية'] },
+    { title: 'تكاليف البناء', dbMatch: 'Construction Cost Index', cols: ['General Index'] },
+  ];
+
+  analyses.forEach(cfg => {
+    const seriesList = cfg.cols.map(c => findSeriesForExec(cfg.dbMatch, c)).filter(Boolean);
+    if (seriesList.length === 0) return;
+
+    const text = generateAnalysis(cfg.title, seriesList);
+
+    const card = document.createElement('div');
+    card.className = 'analysis-card';
+    card.innerHTML = `
+      <div class="analysis-card-title">${cfg.title}</div>
+      <div class="analysis-card-text">${text}</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function generateAnalysis(title, seriesList) {
+  const parts = [];
+  seriesList.forEach(s => {
+    const periods = sortedPeriods(s.data);
+    if (periods.length < 2) return;
+
+    const lastP = periods[periods.length - 1];
+    const lastVal = s.data[lastP];
+    const lookback = s.nativeFrequency === 'monthly' ? 12 : s.nativeFrequency === 'quarterly' ? 4 : 1;
+    const prevIdx = periods.length - 1 - lookback;
+
+    let yoyText = '';
+    if (prevIdx >= 0) {
+      const prevVal = s.data[periods[prevIdx]];
+      if (prevVal && prevVal !== 0) {
+        const pct = ((lastVal - prevVal) / Math.abs(prevVal)) * 100;
+        const dir = pct >= 0 ? 'ارتفاعاً' : 'انخفاضاً';
+        yoyText = `${dir} بنسبة ${Math.abs(pct).toFixed(1)}% على أساس سنوي`;
+      }
+    }
+
+    // QoQ change
+    let qoqText = '';
+    if (periods.length >= 2) {
+      const prevQVal = s.data[periods[periods.length - 2]];
+      if (prevQVal && prevQVal !== 0) {
+        const qPct = ((lastVal - prevQVal) / Math.abs(prevQVal)) * 100;
+        const qDir = qPct >= 0 ? 'ارتفاع' : 'انخفاض';
+        qoqText = `مع ${qDir} ربعي بنسبة ${Math.abs(qPct).toFixed(1)}%`;
+      }
+    }
+
+    // Trend (last 4 periods)
+    let trendText = '';
+    if (periods.length >= 4) {
+      const recent = periods.slice(-4).map(k => s.data[k]).filter(v => v != null);
+      if (recent.length >= 3) {
+        let ups = 0, downs = 0;
+        for (let i = 1; i < recent.length; i++) {
+          if (recent[i] > recent[i-1]) ups++;
+          else downs++;
+        }
+        if (ups >= 2) trendText = 'يشهد اتجاهاً تصاعدياً في الفترات الأخيرة';
+        else if (downs >= 2) trendText = 'يشهد اتجاهاً تنازلياً في الفترات الأخيرة';
+        else trendText = 'يشهد تذبذباً في الفترات الأخيرة';
+      }
+    }
+
+    let line = `سجّل مؤشر ${s.id} قيمة ${formatNumber(lastVal, 0)} في ${lastP}`;
+    if (yoyText) line += `، ${yoyText}`;
+    if (qoqText) line += `، ${qoqText}`;
+    if (trendText) line += `. ${trendText}`;
+    line += '.';
+    parts.push(line);
+  });
+
+  return parts.join(' ');
+}
+
+// ============================================================
+//  DETAILED SECTION
+// ============================================================
+function renderDetailedSeriesList(filter = '') {
+  const list = document.getElementById('seriesList');
+  list.innerHTML = '';
+  const lf = filter.toLowerCase();
+
+  const filtered = AppState.series.filter(s =>
+    !lf || s.id.toLowerCase().includes(lf) || s.description.toLowerCase().includes(lf) || s.source.toLowerCase().includes(lf)
+  );
+
+  const groups = {};
+  filtered.forEach(s => {
+    const src = s.source || 'Other';
+    if (!groups[src]) groups[src] = [];
+    groups[src].push(s);
+  });
+
+  for (const [source, items] of Object.entries(groups)) {
+    const header = document.createElement('div');
+    header.className = 'series-group-header';
+    header.textContent = source;
+    list.appendChild(header);
+
+    items.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'series-item' + (AppState.activeSeries === s.id ? ' active' : '');
+      item.innerHTML = `
+        <span class="series-dot" style="background:${s.color}"></span>
+        <div class="series-item-info">
+          <div class="series-item-mnemonic">${s.id}</div>
+          <div class="series-item-desc">${s.source}</div>
+        </div>
+      `;
+      item.addEventListener('click', () => {
+        showDetailView(s.id);
+        closeMobileDrawer();
+      });
+      list.appendChild(item);
+    });
+  }
+}
+
+function renderEntryScreen() {
+  const grid = document.getElementById('summaryGrid');
+  grid.innerHTML = '';
+
+  if (AppState.series.length === 0) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-secondary)">لا توجد بيانات</div>';
+    return;
+  }
+
+  const groups = {};
+  AppState.series.forEach(s => {
+    const src = s.source || 'Other';
+    if (!groups[src]) groups[src] = [];
+    groups[src].push(s);
+  });
+
+  let sparkIdx = 0;
+  for (const [source, items] of Object.entries(groups)) {
+    const sectionHeader = document.createElement('div');
+    sectionHeader.className = 'summary-section-header';
+    sectionHeader.textContent = source;
+    grid.appendChild(sectionHeader);
+
+    items.forEach(s => {
+      const periods = sortedPeriods(s.data);
+      if (periods.length === 0) return;
+      const lastPeriod = periods[periods.length - 1];
+      const lastVal = s.data[lastPeriod];
+      const lookback = s.nativeFrequency === 'monthly' ? 12 : s.nativeFrequency === 'quarterly' ? 4 : 1;
+      const prevIdx = periods.length - 1 - lookback;
+      let changeHtml = '';
+      if (prevIdx >= 0) {
+        const prevVal = s.data[periods[prevIdx]];
+        if (prevVal && prevVal !== 0) {
+          const diff = lastVal - prevVal;
+          const pct = (diff / Math.abs(prevVal)) * 100;
+          const arrow = pct >= 0 ? '\u25B2' : '\u25BC';
+          const cls = pct >= 0 ? 'positive' : 'negative';
+          changeHtml = `<div class="summary-card-change ${cls}">${arrow} ${formatNumber(Math.abs(diff), 0)} (${Math.abs(pct).toFixed(1)}%)</div>`;
+        }
+      }
+
+      const sparkId = 'summary_spark_' + sparkIdx++;
+      const card = document.createElement('div');
+      card.className = 'summary-card';
+      card.innerHTML = `
+        <div class="summary-card-name">${s.description}</div>
+        <div class="summary-card-unit">${s.unit || s.source}</div>
+        <div class="summary-card-value">${formatNumber(lastVal, 0)}</div>
+        ${changeHtml}
+        <div class="summary-sparkline" id="${sparkId}"></div>
+      `;
+      card.addEventListener('click', () => showDetailView(s.id));
+      grid.appendChild(card);
+
+      setTimeout(() => {
+        const container = document.getElementById(sparkId);
+        if (!container) return;
+        const instance = echarts.init(container);
+        sparklineInstances[sparkId] = instance;
+        const ks = sortedPeriods(s.data).slice(-12);
+        instance.setOption({
+          animation: false,
+          grid: { left: 0, right: 0, top: 2, bottom: 2 },
+          xAxis: { type: 'category', show: false, data: ks },
+          yAxis: { type: 'value', show: false },
+          series: [{ type: 'line', data: ks.map(k => s.data[k]), smooth: true, symbol: 'none',
+            lineStyle: { color: s.color, width: 1.5 },
+            areaStyle: { color: { type: 'linear', x:0,y:0,x2:0,y2:1, colorStops: [{offset:0,color:s.color+'30'},{offset:1,color:s.color+'05'}] } },
+          }],
+        }, true);
+      }, 100);
+    });
+  }
+}
+
+// ============================================================
+//  DETAIL VIEW (CHART + TABLE)
+// ============================================================
+function showDetailView(seriesId) {
+  AppState.activeSeries = seriesId;
+  const series = getSeries(seriesId);
+  if (!series) return;
+
+  AppState.frequency = series.nativeFrequency;
+  AppState.transformation = 'level';
+  AppState.comparisonSeries = null;
+  AppState.dualAxis = false;
+  AppState.forecastEnabled = false;
+
+  const periods = sortedPeriods(series.data);
+  AppState.dateRange.start = null;
+  AppState.dateRange.end = null;
+  document.getElementById('dateFrom').value = periodToMonthInput(periods[0]);
+  document.getElementById('dateTo').value = periodToMonthInput(periods[periods.length - 1]);
+
+  document.getElementById('detailMnemonic').textContent = series.id;
+  document.getElementById('detailDescription').textContent = series.source;
+  document.getElementById('detailUnit').textContent = series.unit;
+
+  const lastPeriod = periods[periods.length - 1];
+  const lastVal = series.data[lastPeriod];
+  document.getElementById('detailLastValue').textContent = formatNumber(lastVal, 0);
+  document.getElementById('detailPeriod').textContent = lastPeriod;
+
+  const lookback = series.nativeFrequency === 'monthly' ? 12 : series.nativeFrequency === 'quarterly' ? 4 : 1;
+  const prevIdx = periods.length - 1 - lookback;
+  const changeEl = document.getElementById('detailChange');
+  if (prevIdx >= 0) {
+    const prevVal = series.data[periods[prevIdx]];
+    if (prevVal && prevVal !== 0) {
+      const pct = ((lastVal - prevVal) / Math.abs(prevVal)) * 100;
+      const arrow = pct >= 0 ? '\u25B2' : '\u25BC';
+      changeEl.textContent = `${arrow} ${Math.abs(pct).toFixed(1)}% YoY`;
+      changeEl.className = 'detail-change ' + (pct >= 0 ? 'positive' : 'negative');
+    } else { changeEl.textContent = ''; }
+  } else { changeEl.textContent = ''; }
+
+  updateFrequencyButtons(series.nativeFrequency);
+  updateTransformButtons();
+
+  document.getElementById('entryScreen').style.display = 'none';
+  document.getElementById('detailView').classList.add('visible');
+
+  document.getElementById('comparisonIndicator').classList.remove('visible');
+  document.getElementById('forecastBtn').classList.remove('active');
+
+  updateSeriesListHighlight();
+
+  setTimeout(() => { renderMainChart(); renderDataTable(); }, 50);
+}
+
+function showEntryScreen() {
+  AppState.activeSeries = null;
+  document.getElementById('detailView').classList.remove('visible');
+  document.getElementById('entryScreen').style.display = '';
+  updateSeriesListHighlight();
+  renderEntryScreen();
+}
+
+function updateFrequencyButtons(nativeFreq) {
+  document.querySelectorAll('[data-freq]').forEach(btn => {
+    const f = btn.dataset.freq;
+    btn.disabled = FREQ_ORDER[f] < FREQ_ORDER[nativeFreq];
+    if (btn.disabled) btn.classList.remove('active');
+    btn.classList.toggle('active', f === AppState.frequency);
+  });
+}
+
+function updateTransformButtons() {
+  const freq = AppState.frequency;
+  document.querySelectorAll('[data-transform]').forEach(btn => {
+    const t = btn.dataset.transform;
+    const disabled = (t === 'qoq' && freq === 'annual') || (t === 'ytd' && freq === 'annual');
+    btn.disabled = disabled;
+    if (disabled && AppState.transformation === t) AppState.transformation = 'level';
+    btn.classList.toggle('active', t === AppState.transformation);
+  });
+}
+
+function updateSeriesListHighlight() {
+  document.querySelectorAll('.series-item').forEach(el => {
+    const mnemonic = el.querySelector('.series-item-mnemonic').textContent;
+    el.classList.toggle('active', mnemonic === AppState.activeSeries);
+  });
+}
+
+function renderMainChart() {
+  const container = document.getElementById('mainChart');
+  if (!mainChartInstance) mainChartInstance = echarts.init(container);
+
+  const series = getSeries(AppState.activeSeries);
+  if (!series) return;
+
+  const freq = AppState.frequency;
+  const rawData = aggregateData(series.data, series.nativeFrequency, freq, series.aggregationMethod);
+  const transformed = applyTransformation(rawData, AppState.transformation, freq);
+  let allPeriods = sortedPeriods(transformed);
+
+  const startSort = monthInputToPeriodSort(AppState.dateRange.start);
+  const endSort = monthInputToPeriodSort(AppState.dateRange.end);
+  if (startSort) allPeriods = allPeriods.filter(k => periodSortValue(k) >= startSort);
+  if (endSort) allPeriods = allPeriods.filter(k => periodSortValue(k) <= endSort + 1);
+
+  const primaryValues = allPeriods.map(k => transformed[k] != null ? Math.round(transformed[k] * 100) / 100 : null);
+
+  let forecastPeriods = [], forecastValues = [], forecastBoundaryIdx = -1;
+  if (AppState.forecastEnabled) {
+    const forecastData = computeForecast(rawData, 8);
+    const forecastTransformed = applyTransformation({ ...rawData, ...forecastData }, AppState.transformation, freq);
+    forecastPeriods = sortedPeriods(forecastData);
+    forecastValues = forecastPeriods.map(k => forecastTransformed[k] != null ? Math.round(forecastTransformed[k] * 100) / 100 : null);
+    forecastBoundaryIdx = allPeriods.length - 1;
+    allPeriods = [...allPeriods, ...forecastPeriods];
+  }
+
+  let compValues = null;
+  if (AppState.comparisonSeries) {
+    const comp = getSeries(AppState.comparisonSeries);
+    if (comp) {
+      const compRaw = aggregateData(comp.data, comp.nativeFrequency, freq, comp.aggregationMethod);
+      const compTransformed = applyTransformation(compRaw, AppState.transformation, freq);
+      compValues = allPeriods.map(k => compTransformed[k] != null ? Math.round(compTransformed[k] * 100) / 100 : null);
+    }
+  }
+
+  const chartSeries = [];
+
+  chartSeries.push({
+    name: series.id,
+    type: 'line', data: [...primaryValues, ...new Array(forecastPeriods.length).fill(null)],
+    smooth: false, symbol: 'none',
+    lineStyle: { color: series.color, width: 2 },
+    itemStyle: { color: series.color },
+    yAxisIndex: 0,
+  });
+
+  if (AppState.forecastEnabled && forecastPeriods.length > 0) {
+    const fData = new Array(primaryValues.length).fill(null);
+    if (primaryValues.length > 0) fData[fData.length - 1] = primaryValues[primaryValues.length - 1];
+    chartSeries.push({
+      name: series.id + ' (توقعات)',
+      type: 'line', data: [...fData, ...forecastValues],
+      smooth: false, symbol: 'none',
+      lineStyle: { color: series.color, width: 2, type: 'dashed' },
+      itemStyle: { color: series.color },
+      yAxisIndex: 0,
+    });
+  }
+
+  if (compValues) {
+    const comp = getSeries(AppState.comparisonSeries);
+    chartSeries.push({
+      name: comp.id,
+      type: 'line', data: compValues,
+      smooth: false, symbol: 'none',
+      lineStyle: { color: comp.color, width: 2 },
+      itemStyle: { color: comp.color },
+      yAxisIndex: AppState.dualAxis ? 1 : 0,
+    });
+  }
+
+  const yAxes = [{
+    type: 'value',
+    axisLabel: { fontSize: 11, formatter: v => formatValue(v, 0) },
+    splitLine: { lineStyle: { color: '#f0f0f0' } },
+  }];
+
+  if (AppState.dualAxis && AppState.comparisonSeries) {
+    yAxes.push({
+      type: 'value',
+      axisLabel: { fontSize: 11, formatter: v => formatValue(v, 0) },
+      splitLine: { show: false },
+    });
+  }
+
+  const markAreas = [];
+  if (AppState.forecastEnabled && forecastBoundaryIdx >= 0 && forecastPeriods.length > 0) {
+    markAreas.push([{ xAxis: allPeriods[forecastBoundaryIdx] }, { xAxis: allPeriods[allPeriods.length - 1] }]);
+  }
+
+  if (markAreas.length > 0) {
+    chartSeries[0].markArea = { silent: true, itemStyle: { color: 'rgba(0,0,0,0.04)' }, data: markAreas };
+    chartSeries[0].markLine = { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#bbb', width: 1 }, data: [{ xAxis: allPeriods[forecastBoundaryIdx] }] };
+  }
+
+  mainChartInstance.setOption({
+    animation: true, animationDuration: 300,
+    grid: { left: 60, right: AppState.dualAxis && AppState.comparisonSeries ? 60 : 20, top: 20, bottom: 40 },
+    xAxis: {
+      type: 'category', data: allPeriods,
+      axisLabel: { fontSize: 11, rotate: allPeriods.length > 20 ? 45 : 0 },
+    },
+    yAxis: yAxes,
+    tooltip: {
+      trigger: 'axis', backgroundColor: '#fff', borderColor: '#e0e0e0',
+      textStyle: { fontSize: 12, fontFamily: 'Tajawal' },
+      formatter: function(params) {
+        let html = `<div style="font-weight:700;margin-bottom:4px">${params[0].axisValue}</div>`;
+        params.forEach(p => {
+          if (p.value != null) {
+            html += `<div style="display:flex;align-items:center;gap:6px">
+              <span style="width:8px;height:8px;border-radius:50%;background:${p.color};display:inline-block"></span>
+              ${p.seriesName}: <strong>${formatValue(p.value)}</strong>
+            </div>`;
+          }
+        });
+        return html;
+      }
+    },
+    series: chartSeries,
+  }, true);
+}
+
+function renderDataTable() {
+  const series = getSeries(AppState.activeSeries);
+  if (!series) return;
+
+  const freq = AppState.frequency;
+  const rawData = aggregateData(series.data, series.nativeFrequency, freq, series.aggregationMethod);
+  const transformed = applyTransformation(rawData, AppState.transformation, freq);
+  let periods = sortedPeriods(transformed);
+
+  const startSort = monthInputToPeriodSort(AppState.dateRange.start);
+  const endSort = monthInputToPeriodSort(AppState.dateRange.end);
+  if (startSort) periods = periods.filter(k => periodSortValue(k) >= startSort);
+  if (endSort) periods = periods.filter(k => periodSortValue(k) <= endSort + 1);
+
+  let compTransformed = null;
+  if (AppState.comparisonSeries) {
+    const comp = getSeries(AppState.comparisonSeries);
+    if (comp) {
+      const compRaw = aggregateData(comp.data, comp.nativeFrequency, freq, comp.aggregationMethod);
+      compTransformed = applyTransformation(compRaw, AppState.transformation, freq);
+    }
+  }
+
+  const thead = document.getElementById('tableHead');
+  const tbody = document.getElementById('tableBody');
+
+  let headHtml = `<tr><th>الفترة</th><th class="val-col">${series.id}</th>`;
+  if (compTransformed) headHtml += `<th class="val-col">${AppState.comparisonSeries}</th>`;
+  headHtml += '</tr>';
+  thead.innerHTML = headHtml;
+
+  let bodyHtml = '';
+  periods.forEach(k => {
+    const val = transformed[k];
+    bodyHtml += `<tr><td class="period-col">${k}</td><td class="val-col">${val != null ? formatValue(val) : ''}</td>`;
+    if (compTransformed) {
+      const cVal = compTransformed[k];
+      bodyHtml += `<td class="val-col">${cVal != null ? formatValue(cVal) : ''}</td>`;
+    }
+    bodyHtml += '</tr>';
+  });
+  tbody.innerHTML = bodyHtml;
+}
+
+// ============================================================
+//  CUSTOM REPORT TAB
+// ============================================================
+const customChartInstances = {};
+
+function renderCustomSelector(filter = '') {
+  const list = document.getElementById('customSelectorList');
+  list.innerHTML = '';
+  const lf = filter.toLowerCase();
+
+  const groups = {};
+  AppState.series.forEach(s => {
+    if (lf && !s.id.toLowerCase().includes(lf) && !s.source.toLowerCase().includes(lf)) return;
+    const src = s.source || 'Other';
+    if (!groups[src]) groups[src] = [];
+    groups[src].push(s);
+  });
+
+  for (const [source, items] of Object.entries(groups)) {
+    const header = document.createElement('div');
+    header.className = 'custom-group-header';
+
+    const groupCheck = document.createElement('input');
+    groupCheck.type = 'checkbox';
+    groupCheck.className = 'custom-group-check';
+    groupCheck.addEventListener('change', () => {
+      const checkboxes = header.nextElementSibling ?
+        [] : [];
+      // Select all in group
+      let sibling = header.nextElementSibling;
+      while (sibling && sibling.classList.contains('custom-series-item')) {
+        const cb = sibling.querySelector('input[type="checkbox"]');
+        if (cb) { cb.checked = groupCheck.checked; sibling.classList.toggle('checked', groupCheck.checked); }
+        sibling = sibling.nextElementSibling;
+      }
+      updateCustomSelectedCount();
+    });
+
+    header.appendChild(groupCheck);
+    header.appendChild(document.createTextNode(source));
+    list.appendChild(header);
+
+    items.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'custom-series-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = s.id;
+      cb.dataset.source = s.source;
+      cb.addEventListener('change', () => {
+        item.classList.toggle('checked', cb.checked);
+        updateCustomSelectedCount();
+      });
+      const label = document.createElement('span');
+      label.textContent = s.id;
+      item.appendChild(cb);
+      item.appendChild(label);
+      item.addEventListener('click', (e) => {
+        if (e.target === cb) return;
+        cb.checked = !cb.checked;
+        item.classList.toggle('checked', cb.checked);
+        updateCustomSelectedCount();
+      });
+      list.appendChild(item);
+    });
+  }
+}
+
+function updateCustomSelectedCount() {
+  const count = document.querySelectorAll('#customSelectorList input[type="checkbox"]:checked:not(.custom-group-check)').length;
+  document.getElementById('customSelectedCount').textContent = count + ' مؤشر محدد';
+}
+
+function getSelectedCustomSeries() {
+  const checkboxes = document.querySelectorAll('#customSelectorList .custom-series-item input[type="checkbox"]:checked');
+  return Array.from(checkboxes).map(cb => getSeries(cb.value)).filter(Boolean);
+}
+
+function renderCustomReport() {
+  const selected = getSelectedCustomSeries();
+  const emptyEl = document.getElementById('customReportEmpty');
+  const contentEl = document.getElementById('customReportContent');
+
+  if (selected.length === 0) {
+    emptyEl.style.display = '';
+    contentEl.style.display = 'none';
+    return;
+  }
+
+  emptyEl.style.display = 'none';
+  contentEl.style.display = '';
+
+  // Dispose old charts
+  Object.values(customChartInstances).forEach(inst => { try { inst.dispose(); } catch(e) {} });
+  for (const k in customChartInstances) delete customChartInstances[k];
+
+  renderCustomKPIs(selected);
+  renderCustomCharts(selected);
+  renderCustomAnalysis(selected);
+}
+
+function renderCustomKPIs(seriesList) {
+  const grid = document.getElementById('customKpiGrid');
+  grid.innerHTML = '';
+
+  seriesList.forEach((series, idx) => {
+    const periods = sortedPeriods(series.data);
+    if (periods.length === 0) return;
+
+    const lastPeriod = periods[periods.length - 1];
+    const lastVal = series.data[lastPeriod];
+
+    const lookback = series.nativeFrequency === 'monthly' ? 12 : series.nativeFrequency === 'quarterly' ? 4 : 1;
+    const prevIdx = periods.length - 1 - lookback;
+    let changeHtml = '';
+    if (prevIdx >= 0) {
+      const prevVal = series.data[periods[prevIdx]];
+      if (prevVal && prevVal !== 0) {
+        const pct = ((lastVal - prevVal) / Math.abs(prevVal)) * 100;
+        const arrow = pct >= 0 ? '\u25B2' : '\u25BC';
+        const cls = pct >= 0 ? 'positive' : 'negative';
+        changeHtml = `<div class="kpi-card-change ${cls}">${arrow} ${Math.abs(pct).toFixed(1)}% على أساس سنوي</div>`;
+      }
+    }
+
+    const sparkId = `custom_kpi_spark_${idx}`;
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    card.innerHTML = `
+      <div class="kpi-card-label">${series.id}</div>
+      <div class="kpi-card-value">${formatNumber(lastVal, 0)}</div>
+      ${changeHtml}
+      <div class="kpi-card-period">${lastPeriod} | ${series.source}</div>
+      <div class="kpi-card-spark" id="${sparkId}"></div>
+    `;
+    grid.appendChild(card);
+
+    setTimeout(() => renderKpiSparkline(sparkId, series.data, series.color), 100);
+  });
+}
+
+function renderCustomCharts(seriesList) {
+  const grid = document.getElementById('customChartsGrid');
+  grid.innerHTML = '';
+
+  seriesList.forEach((series, idx) => {
+    const chartId = `custom_chart_${idx}`;
+    const card = document.createElement('div');
+    card.className = 'exec-chart-card';
+    card.innerHTML = `
+      <div class="exec-chart-title">${series.id} <span style="font-size:12px;color:var(--text-secondary);font-weight:400">(${series.source})</span></div>
+      <div class="exec-chart-container" id="${chartId}"></div>
+    `;
+    grid.appendChild(card);
+
+    setTimeout(() => {
+      const container = document.getElementById(chartId);
+      if (!container) return;
+      const instance = echarts.init(container);
+      customChartInstances[chartId] = instance;
+
+      const allPeriods = sortedPeriods(series.data).slice(-24);
+      const values = allPeriods.map(k => series.data[k] != null ? Math.round(series.data[k] * 100) / 100 : null);
+
+      instance.setOption({
+        animation: true,
+        grid: { left: 60, right: 20, top: 20, bottom: 40 },
+        xAxis: {
+          type: 'category', data: allPeriods,
+          axisLabel: { fontSize: 11, rotate: allPeriods.length > 12 ? 45 : 0 },
+        },
+        yAxis: {
+          type: 'value',
+          axisLabel: { fontSize: 11, formatter: v => formatNumber(v, 0) },
+          splitLine: { lineStyle: { color: '#f0f0f0' } },
+        },
+        tooltip: {
+          trigger: 'axis',
+          textStyle: { fontFamily: 'Tajawal', fontSize: 12 },
+          formatter: function(params) {
+            const p = params[0];
+            return `<div style="font-weight:700">${p.axisValue}</div><div>${p.seriesName}: <strong>${formatNumber(p.value)}</strong></div>`;
+          }
+        },
+        series: [{
+          name: series.id,
+          type: 'line', data: values,
+          smooth: true, symbol: 'circle', symbolSize: 4,
+          lineStyle: { color: series.color, width: 2 },
+          itemStyle: { color: series.color },
+          areaStyle: { color: { type: 'linear', x:0,y:0,x2:0,y2:1, colorStops: [{offset:0,color:series.color+'25'},{offset:1,color:series.color+'05'}] } },
+        }],
+      });
+    }, 150);
+  });
+}
+
+function renderCustomAnalysis(seriesList) {
+  const grid = document.getElementById('customAnalysisGrid');
+  grid.innerHTML = '';
+
+  // Group by source for analysis
+  const groups = {};
+  seriesList.forEach(s => {
+    const src = s.source || 'Other';
+    if (!groups[src]) groups[src] = [];
+    groups[src].push(s);
+  });
+
+  for (const [source, items] of Object.entries(groups)) {
+    const text = generateAnalysis(source, items);
+    const card = document.createElement('div');
+    card.className = 'analysis-card';
+    card.innerHTML = `
+      <div class="analysis-card-title">${source}</div>
+      <div class="analysis-card-text">${text}</div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+// ============================================================
+//  TAB SWITCHING
+// ============================================================
+function switchTab(tabId) {
+  AppState.currentTab = tabId;
+  document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(tb => tb.classList.remove('active'));
+  document.getElementById(tabId).classList.add('active');
+  document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+
+  // Resize charts when switching tabs
+  setTimeout(() => {
+    if (tabId === 'detailedTab' && mainChartInstance) mainChartInstance.resize();
+    if (tabId === 'executiveTab') {
+      Object.values(execChartInstances).forEach(inst => { try { inst.resize(); } catch(e) {} });
+    }
+    if (tabId === 'customTab') {
+      Object.values(customChartInstances).forEach(inst => { try { inst.resize(); } catch(e) {} });
+    }
+    Object.values(sparklineInstances).forEach(inst => { try { inst.resize(); } catch(e) {} });
+  }, 100);
+}
+
+// ============================================================
+//  MOBILE
+// ============================================================
+function openMobileDrawer() {
+  document.getElementById('leftPanel').classList.add('mobile-open');
+  document.getElementById('mobileBackdrop').classList.add('open');
+}
+
+function closeMobileDrawer() {
+  document.getElementById('leftPanel').classList.remove('mobile-open');
+  document.getElementById('mobileBackdrop').classList.remove('open');
+}
+
+// ============================================================
+//  EVENTS
+// ============================================================
+function initEvents() {
+  // Tab navigation
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  // Print
+  document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+  // Collapse panel
+  document.getElementById('collapseBtn').addEventListener('click', () => {
+    document.getElementById('leftPanel').classList.toggle('collapsed');
+    setTimeout(() => { if (mainChartInstance) mainChartInstance.resize(); }, 200);
+  });
+
+  // Search
+  document.getElementById('searchInput').addEventListener('input', e => {
+    renderDetailedSeriesList(e.target.value);
+  });
+
+  // Back button
+  document.getElementById('backBtn').addEventListener('click', showEntryScreen);
+
+  // Frequency buttons
+  document.querySelectorAll('[data-freq]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      AppState.frequency = btn.dataset.freq;
+      updateFrequencyButtons(getSeries(AppState.activeSeries).nativeFrequency);
+      updateTransformButtons();
+      renderMainChart();
+      renderDataTable();
+    });
+  });
+
+  // Transform buttons
+  document.querySelectorAll('[data-transform]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      AppState.transformation = btn.dataset.transform;
+      updateTransformButtons();
+      renderMainChart();
+      renderDataTable();
+    });
+  });
+
+  // Date range
+  document.getElementById('dateFrom').addEventListener('change', e => {
+    AppState.dateRange.start = e.target.value || null;
+    renderMainChart(); renderDataTable();
+  });
+  document.getElementById('dateTo').addEventListener('change', e => {
+    AppState.dateRange.end = e.target.value || null;
+    renderMainChart(); renderDataTable();
+  });
+
+  // Forecast
+  document.getElementById('forecastBtn').addEventListener('click', () => {
+    AppState.forecastEnabled = !AppState.forecastEnabled;
+    document.getElementById('forecastBtn').classList.toggle('active', AppState.forecastEnabled);
+    renderMainChart();
+  });
+
+  // Compare
+  const compareBtn = document.getElementById('compareBtn');
+  const compareDropdown = document.getElementById('compareDropdown');
+
+  compareBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (AppState.comparisonSeries) return;
+    compareDropdown.innerHTML = '';
+    AppState.series.forEach(s => {
+      if (s.id === AppState.activeSeries) return;
+      const opt = document.createElement('div');
+      opt.className = 'compare-option';
+      opt.textContent = s.id + ' — ' + s.source;
+      opt.addEventListener('click', () => {
+        AppState.comparisonSeries = s.id;
+        compareDropdown.classList.remove('open');
+        document.getElementById('comparisonIndicator').classList.add('visible');
+        document.getElementById('comparisonName').textContent = s.id;
+        renderMainChart(); renderDataTable();
+      });
+      compareDropdown.appendChild(opt);
+    });
+    compareDropdown.classList.toggle('open');
+  });
+
+  document.addEventListener('click', () => compareDropdown.classList.remove('open'));
+
+  document.getElementById('removeCompare').addEventListener('click', () => {
+    AppState.comparisonSeries = null;
+    AppState.dualAxis = false;
+    document.getElementById('dualAxisCheck').checked = false;
+    document.getElementById('comparisonIndicator').classList.remove('visible');
+    renderMainChart(); renderDataTable();
+  });
+
+  document.getElementById('dualAxisCheck').addEventListener('change', e => {
+    AppState.dualAxis = e.target.checked;
+    renderMainChart();
+  });
+
+  // Mobile
+  document.getElementById('mobileFab').addEventListener('click', openMobileDrawer);
+  document.getElementById('mobileBackdrop').addEventListener('click', closeMobileDrawer);
+
+  // Custom Report events
+  document.getElementById('customGenerateBtn').addEventListener('click', renderCustomReport);
+  document.getElementById('customSearchInput').addEventListener('input', e => {
+    renderCustomSelector(e.target.value);
+  });
+
+  // Resize
+  window.addEventListener('resize', () => {
+    if (mainChartInstance) mainChartInstance.resize();
+    Object.values(sparklineInstances).forEach(inst => { try { inst.resize(); } catch(e) {} });
+    Object.values(execChartInstances).forEach(inst => { try { inst.resize(); } catch(e) {} });
+    Object.values(customChartInstances).forEach(inst => { try { inst.resize(); } catch(e) {} });
+  });
+}
+
+// ============================================================
+//  INIT
+// ============================================================
+async function init() {
+  // Set date in nav
+  const now = new Date();
+  const months = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  document.getElementById('navDate').textContent = `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+
+  try {
+    await fetchAllNotionData();
+  } catch (err) {
+    document.getElementById('loadingStatus').textContent = 'خطأ في تحميل البيانات: ' + err.message;
+    console.error(err);
+    return;
+  }
+
+  // Hide loading
+  document.getElementById('loadingOverlay').classList.add('hidden');
+
+  // Render executive
+  renderExecutiveKPIs();
+  renderExecutiveCharts();
+  renderExecutiveAnalysis();
+
+  // Render detailed
+  renderDetailedSeriesList();
+  renderEntryScreen();
+
+  // Render custom selector
+  renderCustomSelector();
+
+  // Events
+  initEvents();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

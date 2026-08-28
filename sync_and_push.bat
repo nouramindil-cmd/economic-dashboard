@@ -25,6 +25,13 @@ echo [3/3] تحديث البيانات...
 python sync_data.py sync
 
 echo.
+if not exist ".git" (
+    echo ملاحظة: هذا المجلد ليس نسخة git، فتم تحديث البيانات محلياً فقط.
+    echo لكي تصل التحديثات للوحة المنشورة، احصل على المشروع عبر:
+    echo   git clone https://github.com/nouramindil-cmd/economic-dashboard
+    goto :done
+)
+
 echo رفع التحديثات...
 git add data/live sources.json
 git diff --staged --quiet && (

@@ -208,7 +208,10 @@ def load_all_data(_file_mtime, _live_mtime=0.0):
         df = pd.read_excel(xls, sheet_name=sheet)
         df = df.dropna(how='all')
         if "Date" in df.columns:
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            # Some sheets store the period as a bare year number (2010.0). Plain
+            # to_datetime reads those as nanoseconds and collapses the whole
+            # series onto 1970-01-01, so use the period-aware parser.
+            df["Date"] = data_sources._parse_dates(df["Date"])
             df = df.dropna(subset=["Date"])
             df = df.sort_values("Date")
             # Remove rows where ALL data columns are NaN (future placeholder rows)

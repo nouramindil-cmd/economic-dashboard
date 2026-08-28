@@ -520,6 +520,17 @@ def detect_date_column(df: pd.DataFrame) -> str | None:
 
 def _parse_dates(series: pd.Series) -> pd.Series:
     """Parse the portal's assorted period formats (2024, 2024-Q1, 2024-03, dates)."""
+    # A bare year stored as a number must be handled before pandas sees it:
+    # pd.to_datetime(2010) reads 2010 as nanoseconds and yields 1970-01-01,
+    # which "succeeds" and would silently flatten a whole annual series.
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().mean() >= 0.8:
+        whole = numeric.dropna()
+        if ((whole % 1 == 0) & whole.between(1900, 2100)).mean() >= 0.99:
+            return pd.to_datetime(
+                numeric.astype("Float64").astype("Int64").astype(str) + "-01-01",
+                errors="coerce")
+
     parsed = pd.to_datetime(series, errors="coerce")
     if parsed.notna().mean() >= 0.8:
         return parsed

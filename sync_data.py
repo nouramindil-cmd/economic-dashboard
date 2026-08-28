@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -133,6 +134,122 @@ def cmd_preview(args) -> int:
     return 0
 
 
+def _search_hint(spec) -> str:
+    """The Arabic search phrase stored with each source in sources.json."""
+    match = re.search(r'discover "([^"]+)"', spec.notes or "")
+    return match.group(1) if match else (spec.label or spec.sheet)
+
+
+def cmd_auto(args) -> int:
+    """Find, download and configure every indicator without any manual step.
+
+    For each source that has no dataset_id/resource_url yet, search the portal by
+    its Arabic label, try each candidate result, and keep the first one whose
+    file actually parses and whose columns line up with the dashboard sheet.
+    """
+    specs = ds.load_config()
+    if not specs:
+        print("لا يوجد ملف sources.json.", file=sys.stderr)
+        return 1
+    base_sheets = load_base_sheets()
+
+    try:
+        client = ds.OpenDataClient()
+    except ds.PortalError as exc:
+        print(f"خطأ: {exc}", file=sys.stderr)
+        return 1
+
+    targets = [s for s in specs
+               if (not s.is_configured or args.force)
+               and (not args.only or s.sheet == args.only)]
+    if not targets:
+        print("كل المصادر مضبوطة already. استخدم --force لإعادة البحث.")
+        return 0
+
+    print(f"البحث عن {len(targets)} مؤشر في البوابة...\n")
+    found = 0
+    for spec in targets:
+        hint = _search_hint(spec)
+        label = spec.label or spec.sheet
+        print(f"• {label}\n  البحث عن: {hint}")
+        try:
+            hits = client.search(hint, size=args.candidates)
+        except ds.PortalError as exc:
+            print(f"  ❌ فشل البحث: {str(exc).splitlines()[0]}\n")
+            continue
+        if not hits:
+            print("  ⚠️  لا نتائج\n")
+            continue
+
+        picked = None
+        for hit in hits[:args.candidates]:
+            ident = _get(hit, "id", "datasetId", "identifier", "uuid")
+            title = _get(hit, "title", "name", "titleAr") or "(بدون عنوان)"
+            if not ident:
+                continue
+            trial = ds.SourceSpec(
+                sheet=spec.sheet, label=spec.label, publisher=spec.publisher,
+                enabled=True, dataset_id=ident, date_column=spec.date_column,
+                column_map=spec.column_map, drop_columns=spec.drop_columns,
+                merge_mode=spec.merge_mode, notes=spec.notes,
+            )
+            entry = ds.sync_source(trial, client=client, base_sheets=base_sheets)
+            if entry["status"] == "ok":
+                print(f"  ✅ {title}\n     {entry['rows']} صف، حتى {entry['latest_date']}")
+                picked = trial
+                break
+            print(f"  ↷ {title}: {str(entry['error']).splitlines()[0][:90]}")
+
+        if picked:
+            spec.dataset_id = picked.dataset_id
+            spec.enabled = True
+            detected = entry.get("detected_date_column")
+            if detected and detected != spec.date_column:
+                print(f"     عمود التاريخ المكتشف: {detected}")
+                spec.date_column = detected
+            found += 1
+        else:
+            print("  ⚠️  لم أجد ملفاً مطابقاً — يحتاج ضبطاً يدوياً")
+        print()
+
+    ds.save_config(specs)
+    print(f"{'=' * 55}\nتم ضبط {found} من {len(targets)} مؤشر تلقائياً.")
+    if found < len(targets):
+        print("للمؤشرات المتبقية: نفّذ  python sync_data.py diagnose > تقرير.txt")
+        print("وأرسل الملف الناتج للمساعدة في ضبطها.")
+    return 0
+
+
+def cmd_diagnose(args) -> int:
+    """Dump everything needed to debug discovery, in one pasteable report."""
+    print("=" * 60); print("تقرير تشخيص الاتصال بالبوابة"); print("=" * 60)
+    try:
+        client = ds.OpenDataClient()
+    except ds.PortalError as exc:
+        print(f"تعذّر إنشاء العميل: {exc}"); return 1
+    print(f"مفتاح API: {'موجود' if client.api_key else 'غير موجود'}\n")
+
+    for base in client.bases:
+        for path in ["/ar/datasets", "/data/api/v1/datasets?version=-1&page=0&size=2"]:
+            url = base + path
+            try:
+                r = client._get(url)
+                print(f"{url}\n  -> {r.status_code} | "
+                      f"{r.headers.get('content-type','')[:50]} | {len(r.content)} bytes")
+                print(f"  {r.text[:300]!r}\n")
+            except Exception as exc:
+                print(f"{url}\n  -> EXC {type(exc).__name__}: {str(exc)[:160]}\n")
+
+    print("=" * 60); print("محاولة بحث كاملة"); print("=" * 60)
+    try:
+        hits = client.search("الناتج المحلي الإجمالي", size=3)
+        print(f"المسار الناجح: {client.resolved_base}{client.resolved_pattern}")
+        print(json.dumps(hits[:2], ensure_ascii=False, indent=2)[:2500])
+    except ds.PortalError as exc:
+        print(f"فشل: {exc}")
+    return 0
+
+
 def cmd_sync(args) -> int:
     specs = ds.load_config()
     if not specs:
@@ -207,6 +324,16 @@ def main() -> int:
     p.add_argument("--strict", action="store_true",
                    help="أرجع رمز خطأ إذا فشل أي مصدر")
     p.set_defaults(func=cmd_sync)
+
+    p = sub.add_parser("auto", help="ابحث واضبط كل المؤشرات تلقائياً")
+    p.add_argument("--only", default="", help="مؤشر واحد فقط")
+    p.add_argument("--force", action="store_true", help="أعد البحث حتى للمضبوط مسبقاً")
+    p.add_argument("--candidates", type=int, default=4,
+                   help="كم نتيجة بحث تُجرَّب لكل مؤشر")
+    p.set_defaults(func=cmd_auto)
+
+    p = sub.add_parser("diagnose", help="تقرير تشخيصي للاتصال بالبوابة")
+    p.set_defaults(func=cmd_diagnose)
 
     p = sub.add_parser("status", help="اعرض حالة المصادر")
     p.set_defaults(func=cmd_status)

@@ -174,10 +174,57 @@ class OpenDataClient:
                 if hits:
                     self.resolved_base, self.resolved_pattern = base, pattern
                     return hits
+        html_hits = self.search_html(query, size)
+        if html_hits:
+            return html_hits
         raise PortalError(
             "تعذّر الوصول لواجهة البحث في البوابة. المسارات التي جُرِّبت:\n  "
             + "\n  ".join(errors)
         )
+
+    def search_html(self, query: str, size: int = 10) -> list[dict]:
+        """Fallback discovery: read the portal's search page instead of its API.
+
+        The portal is a JavaScript app, so the useful payload is either an
+        embedded state blob (``__NEXT_DATA__`` / ``__NUXT__``) or plain links of
+        the form ``/datasets/view/<id>``. Both are handled here.
+        """
+        from urllib.parse import quote
+
+        out: list[dict] = []
+        for base in self.bases:
+            for path in (f"/ar/datasets?q={quote(query)}",
+                         f"/ar/datasets?search={quote(query)}",
+                         f"/en/datasets?q={quote(query)}"):
+                try:
+                    resp = self._get(base + path, headers={"Accept": "text/html"})
+                except Exception:
+                    continue
+                if resp.status_code != 200 or not resp.text:
+                    continue
+                html = resp.text
+
+                for blob in re.findall(
+                        r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                        html, re.S):
+                    try:
+                        records = _extract_records(json.loads(blob))
+                    except ValueError:
+                        continue
+                    if records:
+                        self.resolved_base, self.resolved_pattern = base, path
+                        return records[:size]
+
+                ids = []
+                for match in re.finditer(
+                        r'/datasets/view/([A-Za-z0-9][A-Za-z0-9_-]{5,})', html):
+                    if match.group(1) not in ids:
+                        ids.append(match.group(1))
+                if ids:
+                    self.resolved_base, self.resolved_pattern = base, path
+                    out = [{"id": i, "title": "", "_from": "html"} for i in ids[:size]]
+                    return out
+        return out
 
     def get_dataset(self, dataset_id: str) -> dict:
         """Fetch metadata (including resources) for one dataset."""
@@ -202,9 +249,43 @@ class OpenDataClient:
         meta = self.get_dataset(dataset_id)
         return _extract_resources(meta)
 
+    def resources_from_html(self, dataset_id: str) -> list[dict]:
+        """Fallback: read file links straight off the dataset's own page."""
+        out: list[dict] = []
+        for base in self.bases:
+            for path in (f"/ar/datasets/view/{dataset_id}",
+                         f"/en/datasets/view/{dataset_id}",
+                         f"/ar/datasets/{dataset_id}"):
+                try:
+                    resp = self._get(base + path, headers={"Accept": "text/html"})
+                except Exception:
+                    continue
+                if resp.status_code != 200 or not resp.text:
+                    continue
+                html = resp.text
+                urls: list[str] = []
+                for match in re.finditer(
+                        r'https?://[^\s"\'<>]+?\.(?:csv|xlsx|xls|json|tsv)\b', html, re.I):
+                    if match.group(0) not in urls:
+                        urls.append(match.group(0))
+                for match in re.finditer(
+                        r'["\'](/[^\s"\'<>]+?\.(?:csv|xlsx|xls|json|tsv))\b', html, re.I):
+                    full = base + match.group(1)
+                    if full not in urls:
+                        urls.append(full)
+                if urls:
+                    self.resolved_base = base
+                    return [{"title": u.rsplit("/", 1)[-1], "downloadUrl": u} for u in urls]
+        return out
+
     def pick_resource(self, dataset_id: str, match: str = "") -> dict:
         """Choose the tabular resource to download for a dataset."""
-        resources = [r for r in self.list_resources(dataset_id) if _resource_url(r)]
+        try:
+            resources = [r for r in self.list_resources(dataset_id) if _resource_url(r)]
+        except PortalError:
+            resources = []
+        if not resources:
+            resources = self.resources_from_html(dataset_id)
         if not resources:
             raise PortalError(f"لا توجد ملفات قابلة للتنزيل في المجموعة {dataset_id}")
         if match:
@@ -383,6 +464,12 @@ def normalize(df: pd.DataFrame, spec: SourceSpec) -> pd.DataFrame:
     if date_col not in df.columns:
         mapped = spec.column_map.get(date_col)
         date_col = mapped if mapped in df.columns else "Date"
+    if date_col not in df.columns:
+        # The portal names its period column differently per dataset, so fall back
+        # to whichever column actually parses as a series of periods.
+        detected = detect_date_column(df)
+        if detected:
+            date_col = detected
     if date_col in df.columns:
         if date_col != "Date":
             df = df.rename(columns={date_col: "Date"})
@@ -402,6 +489,33 @@ def normalize(df: pd.DataFrame, spec: SourceSpec) -> pd.DataFrame:
             df[col] = converted
 
     return df.reset_index(drop=True)
+
+
+DATE_NAME_HINTS = ("date", "period", "time", "year", "month", "quarter",
+                   "تاريخ", "الفترة", "فترة", "سنة", "شهر", "ربع", "الزمن")
+
+
+def detect_date_column(df: pd.DataFrame) -> str | None:
+    """Pick the column that best behaves like a period/date column."""
+    best, best_score = None, 0.0
+    for col in df.columns:
+        if str(col).startswith("Unnamed:"):
+            continue
+        try:
+            parsed = _parse_dates(df[col])
+        except Exception:
+            continue
+        score = float(parsed.notna().mean())
+        if score < 0.8:
+            continue
+        # Unique, ordered periods beat a column that merely contains numbers,
+        # and a date-ish name breaks ties.
+        score += 0.1 * (parsed.dropna().is_unique)
+        if any(h in str(col).strip().lower() for h in DATE_NAME_HINTS):
+            score += 0.25
+        if score > best_score:
+            best, best_score = col, score
+    return best
 
 
 def _parse_dates(series: pd.Series) -> pd.Series:
@@ -492,6 +606,21 @@ def _write_manifest(manifest: dict, live_dir: Path) -> None:
     )
 
 
+def _used_date_column(raw: pd.DataFrame, spec: SourceSpec) -> str:
+    """Report which source column ended up acting as the date column."""
+    cols = [str(c).strip() for c in raw.columns]
+    if (spec.date_column or "Date") in cols:
+        return spec.date_column or "Date"
+    renamed = raw.copy()
+    renamed.columns = cols
+    if spec.column_map:
+        renamed = renamed.rename(columns={str(k).strip(): v
+                                          for k, v in spec.column_map.items()})
+    if "Date" in renamed.columns:
+        return "Date"
+    return detect_date_column(renamed) or ""
+
+
 def _latest_date(df: pd.DataFrame) -> str | None:
     if "Date" not in df.columns or not df["Date"].notna().any():
         return None
@@ -540,6 +669,7 @@ def sync_source(spec: SourceSpec, client: OpenDataClient | None = None,
 
         entry.update(
             status="ok",
+            detected_date_column=_used_date_column(raw, spec),
             source_url=url,
             filename=filename,
             rows=int(len(live)),

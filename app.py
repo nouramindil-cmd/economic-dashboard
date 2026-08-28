@@ -6,6 +6,8 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
+import data_sources
+
 # ──────────────────────────────────────────────
 # Page Config (must be first Streamlit command)
 # ──────────────────────────────────────────────
@@ -198,8 +200,8 @@ def _get_file_mtime():
 
 
 @st.cache_data(ttl=60)
-def load_all_data(_file_mtime):
-    """Load data. _file_mtime forces reload when file changes."""
+def load_all_data(_file_mtime, _live_mtime=0.0):
+    """Load data. The mtime args force a reload when the file or live cache changes."""
     xls = pd.ExcelFile(EXCEL_PATH)
     data = {}
     for sheet in xls.sheet_names:
@@ -217,14 +219,27 @@ def load_all_data(_file_mtime):
             if numeric_cols:
                 df = df.dropna(subset=numeric_cols, how='all')
         data[sheet] = df
-    return data
+
+    # Overlay any data synced from the Open Data Portal. A source that failed
+    # validation is not in the cache, so the workbook keeps serving that sheet.
+    return data_sources.apply_live_data(data)
 
 
 try:
-    DATA = load_all_data(_get_file_mtime())
+    DATA = load_all_data(_get_file_mtime(), data_sources.live_signature())
 except Exception as e:
     st.error(f"خطأ في قراءة الملف: {e}")
     st.stop()
+
+LIVE_MANIFEST = data_sources.read_manifest()
+
+
+def run_sync(only=None):
+    """Refresh from the portal, then drop the cache so the new data is picked up."""
+    base = {s: df for s, df in DATA.items()}
+    manifest = data_sources.sync_all(base_sheets=base, only=only)
+    st.cache_data.clear()
+    return manifest
 
 
 # ──────────────────────────────────────────────
@@ -502,6 +517,7 @@ PAGES = {
     "تكاليف البناء": "cci",
     "سوق العمل": "labor",
     "الاقتصاد الكلي": "macro",
+    "مصادر البيانات": "sources",
 }
 
 with st.sidebar:
@@ -515,8 +531,24 @@ with st.sidebar:
     page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
     st.markdown("---")
     st.markdown(f"<div style='text-align:center;font-size:0.7rem;color:#9ca3af;'>آخر تحديث للبيانات<br>{get_last_date(DATA.get('GDP_Data', pd.DataFrame()))}</div>", unsafe_allow_html=True)
+
+    _live_sources = LIVE_MANIFEST.get("sources") or {}
+    _live_ok = sum(1 for e in _live_sources.values() if e.get("status") == "ok")
+    _live_bad = len(_live_sources) - _live_ok
+    if _live_sources:
+        _sync_at = (LIVE_MANIFEST.get("last_sync") or "")[:16].replace("T", " ")
+        _badge = f"🟢 {_live_ok} مصدر حي" + (f" · ⚠️ {_live_bad}" if _live_bad else "")
+        st.markdown(
+            f"<div style='text-align:center;font-size:0.7rem;color:#6b7280;margin-top:6px;'>"
+            f"{_badge}<br>آخر مزامنة: {_sync_at or '—'}</div>",
+            unsafe_allow_html=True)
+
     if st.button("تحديث البيانات", use_container_width=True):
-        st.cache_data.clear()
+        if _live_sources or any(s.enabled for s in data_sources.load_config()):
+            with st.spinner("جارٍ جلب البيانات من بوابة البيانات المفتوحة..."):
+                run_sync()
+        else:
+            st.cache_data.clear()
         st.rerun()
 
 current_page = PAGES[page]
@@ -1228,7 +1260,118 @@ elif current_page == "macro":
                         st.plotly_chart(fig, use_container_width=True)
 
 
+# ══════════════════════════════════════════════
+# DATA SOURCES PAGE
+# ══════════════════════════════════════════════
+elif current_page == "sources":
+    st.markdown("""
+    <div class="main-header">
+        <h1>مصادر البيانات</h1>
+        <p>ربط اللوحة ببوابة البيانات المفتوحة — open.data.gov.sa</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    specs = data_sources.load_config()
+    manifest = data_sources.read_manifest()
+    entries = manifest.get("sources") or {}
+
+    configured = [s for s in specs if s.enabled and s.is_configured]
+    ok = sum(1 for e in entries.values() if e.get("status") == "ok")
+    problems = sum(1 for e in entries.values() if e.get("status") in ("error", "stale"))
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(make_card("مصادر مُعرّفة", len(specs)), unsafe_allow_html=True)
+    with c2:
+        st.markdown(make_card("مصادر مُفعّلة", len(configured)), unsafe_allow_html=True)
+    with c3:
+        st.markdown(make_card("محدّثة بنجاح", ok), unsafe_allow_html=True)
+    with c4:
+        st.markdown(make_card("تحتاج مراجعة", problems, delta_good_up=False),
+                    unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col_a, col_b = st.columns([1, 3])
+    with col_a:
+        if st.button("تحديث كل المصادر", use_container_width=True, type="primary"):
+            with st.spinner("جارٍ جلب البيانات من البوابة..."):
+                run_sync()
+            st.rerun()
+    with col_b:
+        last_sync = (manifest.get("last_sync") or "").replace("T", " ")[:19]
+        st.markdown(
+            f"<div style='padding-top:8px;color:#6b7280;font-size:0.85rem;'>"
+            f"آخر مزامنة: {last_sync or 'لم تتم بعد'}</div>",
+            unsafe_allow_html=True)
+
+    if not configured:
+        st.info(
+            "لم يُفعَّل أي مصدر بعد، واللوحة تعمل حالياً من ملف الإكسل المرفق.\n\n"
+            "لربط مصدر بالبوابة، افتح `sources.json` وضع لكل مؤشر إمّا `dataset_id` "
+            "(معرّف المجموعة في البوابة) أو `resource_url` (رابط ملف CSV/XLSX مباشر)، "
+            "ثم اجعل `enabled` تساوي `true`.\n\n"
+            "للعثور على المعرّفات نفّذ محلياً:\n"
+            "`python sync_data.py discover \"الناتج المحلي الإجمالي\"`"
+        )
+
+    st.markdown("<h3 class='section-title'>حالة المصادر</h3>", unsafe_allow_html=True)
+
+    status_label = {"ok": "✅ محدّث", "stale": "⚠️ نسخة سابقة",
+                    "error": "❌ فشل", None: "⚪ غير مُفعّل"}
+    rows = []
+    for spec in specs:
+        entry = entries.get(spec.sheet, {})
+        status = entry.get("status") if spec.enabled else None
+        if spec.enabled and not entry:
+            status = "error"
+        rows.append({
+            "المؤشر": spec.label or spec.sheet,
+            "الورقة": spec.sheet,
+            "الجهة": spec.publisher,
+            "الحالة": status_label.get(status, "⚪ غير مُفعّل"),
+            "عدد الصفوف": f"{entry['rows']:,}" if entry.get("rows") else "—",
+            "أحدث فترة": entry.get("latest_date") or "—",
+            "آخر تحديث": (entry.get("updated_at") or "—").replace("T", " ")[:16],
+        })
+    st.markdown(render_html_table(pd.DataFrame(rows), max_rows=len(rows)),
+                unsafe_allow_html=True)
+
+    failed = {s: e for s, e in entries.items() if e.get("error")}
+    if failed:
+        st.markdown("<h3 class='section-title'>تفاصيل الأخطاء</h3>",
+                    unsafe_allow_html=True)
+        for sheet, entry in failed.items():
+            with st.expander(f"{entry.get('label') or sheet}"):
+                st.write(entry.get("error"))
+                if entry.get("source_url"):
+                    st.caption(f"الرابط: {entry['source_url']}")
+
+    if configured:
+        st.markdown("<h3 class='section-title'>تحديث مصدر واحد</h3>",
+                    unsafe_allow_html=True)
+        choice = st.selectbox("اختر المؤشر",
+                              [s.sheet for s in configured],
+                              format_func=lambda sh: next(
+                                  (s.label or s.sheet for s in configured
+                                   if s.sheet == sh), sh))
+        if st.button("تحديث المصدر المحدد"):
+            with st.spinner("جارٍ التحديث..."):
+                run_sync(only=choice)
+            st.rerun()
+
+    with st.expander("كيف تعمل آلية التحديث؟"):
+        st.markdown("""
+- **ملف الإكسل** في مجلد `data/` هو الأساس، ويبقى يعمل دائماً حتى لو تعذّر الوصول للبوابة.
+- **المصادر المُفعّلة** في `sources.json` تُجلب من البوابة وتُخزَّن في `data/live/`.
+- عند العرض تُدمج البيانات الحية فوق الإكسل: `extend` يبقي التاريخ القديم ويضيف/يحدّث الفترات الجديدة، و`replace` يستبدل الورقة بالكامل.
+- **التحقق قبل العرض**: أي مصدر لا يحتوي عمود تاريخ أو أعمدة رقمية أو لا تطابق أعمدته الورقة الحالية يُرفض ويُسجَّل هنا، ولا يصل إلى الرسوم.
+- **التحديث التلقائي**: مهمة `.github/workflows/sync-data.yml` تعمل يومياً وتحفظ أي بيانات جديدة في المستودع، فتظهر في اللوحة دون تدخل.
+        """)
+
+
+
 # ──────────────────────────────────────────────
 # Footer
 # ──────────────────────────────────────────────
-st.markdown('<div class="report-footer">لوحة المؤشرات الاقتصادية والاجتماعية | البيانات تتحدث تلقائياً من ملف Excel المرتبط بـ Notion</div>', unsafe_allow_html=True)
+st.markdown('<div class="report-footer">لوحة المؤشرات الاقتصادية والاجتماعية | البيانات تتحدث تلقائياً من بوابة البيانات المفتوحة وملف Excel المرفق</div>', unsafe_allow_html=True)

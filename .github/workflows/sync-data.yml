@@ -1,0 +1,42 @@
+name: Sync open data
+
+# التحديث التلقائي للبيانات من بوابة البيانات المفتوحة.
+# يعمل يومياً، وأي بيانات جديدة تُحفظ في المستودع فتظهر في اللوحة مباشرة.
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 06:00 بتوقيت السعودية
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Sync datasets
+        env:
+          OPEN_DATA_API_KEY: ${{ secrets.OPEN_DATA_API_KEY }}
+        run: python sync_data.py sync
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/live
+          if git diff --staged --quiet; then
+            echo "لا توجد بيانات جديدة."
+          else
+            git commit -m "chore(data): تحديث تلقائي من بوابة البيانات المفتوحة"
+            git push
+          fi

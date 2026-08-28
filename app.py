@@ -320,7 +320,22 @@ def aggregate_data(df, freq, date_col="Date", value_cols=None, method="sum"):
         return df[value_cols].dropna(how="all").reset_index()
 
     agg_func = {"sum": "sum", "last": "last", "mean": "mean"}.get(method, "sum")
-    result = df[value_cols].resample(freq_code).agg(agg_func).dropna(how="all").reset_index()
+    resampled = df[value_cols].resample(freq_code)
+    result = resampled.agg(agg_func)
+
+    if agg_func == "sum":
+        # A trailing period that is still filling up (e.g. one month of a quarter)
+        # sums to a fraction of a full period and reads as a collapse. Drop it —
+        # comparing a partial period against complete ones is not meaningful.
+        expected = max(1, round(target_days / median_gap)) if median_gap else 1
+        if expected > 1:
+            counts = resampled.count().max(axis=1)
+            keep = counts >= expected
+            # Only trim from the tail; gaps inside the series stay as they are.
+            if len(keep) and not keep.iloc[-1]:
+                result = result.iloc[:-1]
+
+    result = result.dropna(how="all").reset_index()
     # Remove rows that are all zeros (empty periods summed to 0)
     numeric = result[value_cols]
     result = result[~((numeric == 0) | numeric.isna()).all(axis=1)]
@@ -517,6 +532,7 @@ PAGES = {
     "تكاليف البناء": "cci",
     "سوق العمل": "labor",
     "الاقتصاد الكلي": "macro",
+    "ساما — القطاع المصرفي": "sama",
     "مصادر البيانات": "sources",
 }
 
@@ -1258,6 +1274,158 @@ elif current_page == "macro":
                         fig.update_layout(title=f"{title} حسب المنطقة", height=400,
                                           **{k: v for k, v in CHART_LAYOUT.items() if k != "legend"})
                         st.plotly_chart(fig, use_container_width=True)
+
+
+# ══════════════════════════════════════════════
+# SAMA PAGE — banking and credit aggregates
+# ══════════════════════════════════════════════
+elif current_page == "sama":
+    st.markdown('<div class="page-title">ساما — القطاع المصرفي والائتمان</div>',
+                unsafe_allow_html=True)
+    st.markdown('<div class="page-subtitle">القروض العقارية والتمويل السكني '
+                'والائتمان الاستهلاكي — البنك المركزي السعودي</div>',
+                unsafe_allow_html=True)
+
+    loans = DATA.get("Real Estate Loans by Banks", pd.DataFrame()).copy()
+    mort_b = DATA.get("Residential New Mortgages Banks", pd.DataFrame()).copy()
+    mort_c = DATA.get("Residential New MortgaCompanies", pd.DataFrame()).copy()
+    consumer = DATA.get("CONSUMER  AND CREDIT CARD", pd.DataFrame()).copy()
+
+    st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
+    f1, f2 = st.columns(2)
+    with f1:
+        sama_period = st.selectbox("عرض البيانات", ["شهري", "ربعي", "سنوي"],
+                                   index=1, key="sama_period")
+    with f2:
+        sama_compare = st.selectbox("المقارنة", ["سنوي (YoY)", "الفترة السابقة"],
+                                    key="sama_compare")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    freq = {"شهري": "M", "ربعي": "Q", "سنوي": "Y"}[sama_period]
+    yoy = "سنوي" in sama_compare
+    # Periods per year differ by frequency, so a YoY step is 12/4/1 rows.
+    step = ({"M": 12, "Q": 4, "Y": 1}[freq]) if yoy else 1
+
+    def _kpi(series, label, good_up=True):
+        s = series.dropna()
+        if s.empty:
+            return make_card(label, float("nan"))
+        return make_card(label, s.iloc[-1], calc_change(s, step), good_up)
+
+    # ── Headline numbers ──
+    LOAN_COLS = [c for c in ["الاجمالي", "الافراد", "الشركات"] if c in loans.columns]
+    agg_loans = (aggregate_data(loans, freq, value_cols=LOAN_COLS, method="last")
+                 if LOAN_COLS else pd.DataFrame())
+    CONS_COL = "القروض الاستهلاكية والبطاقات الائتمانية"
+    agg_cons = (aggregate_data(consumer, freq, value_cols=[CONS_COL], method="last")
+                if CONS_COL in consumer.columns else pd.DataFrame())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(_kpi(agg_loans.get("الاجمالي", pd.Series(dtype=float)),
+                         "إجمالي القروض العقارية (مليون ريال)"),
+                    unsafe_allow_html=True)
+    with k2:
+        st.markdown(_kpi(agg_loans.get("الافراد", pd.Series(dtype=float)),
+                         "قروض الأفراد (مليون ريال)"), unsafe_allow_html=True)
+    with k3:
+        st.markdown(_kpi(agg_loans.get("الشركات", pd.Series(dtype=float)),
+                         "قروض الشركات (مليون ريال)"), unsafe_allow_html=True)
+    with k4:
+        st.markdown(_kpi(agg_cons.get(CONS_COL, pd.Series(dtype=float)),
+                         "الائتمان الاستهلاكي (مليون ريال)"), unsafe_allow_html=True)
+
+    # ── Real estate loans ──
+    if not agg_loans.empty:
+        st.markdown('<div class="section-title">القروض العقارية من المصارف</div>',
+                    unsafe_allow_html=True)
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.plotly_chart(plot_multi_line(agg_loans, "Date", LOAN_COLS,
+                                            "تطور القروض العقارية"),
+                            use_container_width=True)
+        with c2:
+            last = agg_loans.dropna(subset=LOAN_COLS, how="all").iloc[-1]
+            parts = [c for c in ("الافراد", "الشركات") if c in agg_loans.columns
+                     and pd.notna(last.get(c))]
+            if parts:
+                st.plotly_chart(
+                    plot_pie(parts, [last[c] for c in parts],
+                             "توزيع القروض العقارية"), use_container_width=True)
+        st.markdown(generate_analysis(agg_loans, LOAN_COLS, title="القروض العقارية"),
+                    unsafe_allow_html=True)
+
+    # ── New residential mortgages: banks vs finance companies ──
+    MORT_COLS = ["Apartments", "Houses ", "Land", "Total"]
+    have_b = [c for c in MORT_COLS if c in mort_b.columns]
+    have_c = [c for c in MORT_COLS if c in mort_c.columns]
+    if have_b or have_c:
+        st.markdown('<div class="section-title">التمويل السكني الجديد</div>',
+                    unsafe_allow_html=True)
+
+        agg_b = aggregate_data(mort_b, freq, value_cols=have_b) if have_b else pd.DataFrame()
+        agg_c = aggregate_data(mort_c, freq, value_cols=have_c) if have_c else pd.DataFrame()
+
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.markdown(_kpi(agg_b.get("Total", pd.Series(dtype=float)),
+                             "التمويل عبر المصارف"), unsafe_allow_html=True)
+        with m2:
+            st.markdown(_kpi(agg_c.get("Total", pd.Series(dtype=float)),
+                             "التمويل عبر شركات التمويل"), unsafe_allow_html=True)
+        with m3:
+            tb = agg_b["Total"].dropna() if "Total" in agg_b.columns else pd.Series(dtype=float)
+            tc = agg_c["Total"].dropna() if "Total" in agg_c.columns else pd.Series(dtype=float)
+            share = (tb.iloc[-1] / (tb.iloc[-1] + tc.iloc[-1]) * 100
+                     if len(tb) and len(tc) and (tb.iloc[-1] + tc.iloc[-1]) else float("nan"))
+            st.markdown(make_card("حصة المصارف من التمويل السكني", share,
+                                  fmt="{:,.1f}%"), unsafe_allow_html=True)
+
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if not agg_b.empty:
+                by_type = [c for c in ("Apartments", "Houses ", "Land") if c in agg_b.columns]
+                st.plotly_chart(
+                    plot_bar_comparison(agg_b.tail(12), "Date", by_type,
+                                        "التمويل عبر المصارف حسب نوع العقار",
+                                        barmode="stack"), use_container_width=True)
+        with cc2:
+            if not tb.empty and not tc.empty:
+                compare = pd.DataFrame({"Date": agg_b["Date"]})
+                compare["المصارف"] = agg_b["Total"].values
+                merged_c = agg_c.set_index("Date")["Total"] if "Total" in agg_c.columns else None
+                if merged_c is not None:
+                    compare["شركات التمويل"] = compare["Date"].map(merged_c)
+                    st.plotly_chart(
+                        plot_multi_line(compare, "Date", ["المصارف", "شركات التمويل"],
+                                        "المصارف مقابل شركات التمويل"),
+                        use_container_width=True)
+
+    # ── Consumer credit ──
+    if not agg_cons.empty:
+        st.markdown('<div class="section-title">الائتمان الاستهلاكي والبطاقات</div>',
+                    unsafe_allow_html=True)
+        st.plotly_chart(plot_line(agg_cons, "Date", CONS_COL,
+                                  "القروض الاستهلاكية والبطاقات الائتمانية"),
+                        use_container_width=True)
+        st.markdown(generate_analysis(agg_cons, [CONS_COL],
+                                      title="الائتمان الاستهلاكي"),
+                    unsafe_allow_html=True)
+
+    # ── Detail table ──
+    if not agg_loans.empty:
+        st.markdown('<div class="section-title">البيانات التفصيلية</div>',
+                    unsafe_allow_html=True)
+        table = add_change_columns(agg_loans.tail(24), value_cols=LOAN_COLS,
+                                   change_type="yoy" if yoy else "qoq")
+        st.markdown(render_html_table(table.iloc[::-1], max_rows=12),
+                    unsafe_allow_html=True)
+
+    st.markdown(
+        "<div style='color:#6b7280;font-size:0.78rem;margin-top:18px;'>"
+        "المصدر: البنك المركزي السعودي (ساما). لتحديث هذه الأرقام تلقائياً، اضبط "
+        "مصادر ساما في صفحة «مصادر البيانات».</div>", unsafe_allow_html=True)
+
 
 
 # ══════════════════════════════════════════════

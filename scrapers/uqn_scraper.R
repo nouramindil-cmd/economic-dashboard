@@ -955,17 +955,16 @@ preview_categories <- function(urls, n = 10) {
 # يضم القائمة والتذييل (25-40 ألف حرف). نختار بدلًا من ذلك الكتلة
 # الأغنى بنص الفقرات والأفقر بالروابط - وهذا وصف متن المقال.
 extract_fallback_body <- function(doc) {
-  cands <- rvest::html_elements(doc, "div,section,article,td")
+  cands <- rvest::html_elements(doc, "div,section,article,main,td")
   if (length(cands) == 0) return(NULL)
   best <- NULL
-  best_score <- 100      # حد أدنى حتى لا نلتقط فتاتًا
+  best_score <- 150
   for (e in cands) {
-    ps <- rvest::html_elements(e, "p")
-    if (length(ps) == 0) next
-    tlen <- sum(nchar(rvest::html_text2(ps)))
+    tlen <- nchar(clean_text(rvest::html_text2(e)))
+    if (tlen < 150) next
     links <- rvest::html_elements(e, "a")
     llen <- if (length(links) > 0) sum(nchar(rvest::html_text2(links))) else 0
-    score <- tlen - 2 * llen          # الروابط دليل قائمة لا متن
+    score <- tlen - 3L * llen      # الروابط دليل قائمة/تذييل لا متن
     if (score > best_score) { best_score <- score; best <- e }
   }
   best
@@ -1032,13 +1031,20 @@ parse_detail <- function(html_txt, url) {
     if (is.na(info$date_hijri)) info$date_hijri <- alt$date_hijri
   }
 
+  # ملاحظة من الموقع: في كثير من صفحات الأرشيف يوجد
+  # article#article-content لكنه فارغ، والمتن في div.body-wrapper بلا
+  # أي وسم <p>. لذلك نفحص كل العناصر المطابقة لا أولها فقط، ونقبل
+  # أولها الذي يحمل نصًا ذا معنى.
   body <- NULL
-  for (sel in c("article#article-content", ".article-desc", "article",
-                ".article-body", ".article-text", ".news-details")) {
+  for (sel in c("article#article-content", ".article-desc", ".body-wrapper",
+                "[class*=ummalqura-art]", "article", ".article-body",
+                ".article-text", ".news-details")) {
     els <- rvest::html_elements(doc, sel)
-    if (length(els) > 0 && nzchar(clean_text(rvest::html_text2(els[[1]])))) {
-      body <- els[[1]]; break
+    if (length(els) == 0) next
+    for (e in els) {
+      if (nchar(clean_text(rvest::html_text2(e))) > 40) { body <- e; break }
     }
+    if (!is.null(body)) break
   }
   if (is.null(body)) body <- extract_fallback_body(doc)
 

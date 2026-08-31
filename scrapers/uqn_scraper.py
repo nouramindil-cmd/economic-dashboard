@@ -90,7 +90,7 @@ def _soup(html):
 # روابط التنقل العامة التي يجب تجاهلها عند جمع روابط العناصر
 NAV_HINTS = (
     "/login", "/register", "/search", "/contact", "/about", "/privacy",
-    "/terms", "/sitemap", "/rss", "/media", "/news-", "/help", "/faq",
+    "/terms", "/sitemap", "/rss", "/media", "/news", "/help", "/faq",
     "javascript:", "mailto:", "tel:", "#",
 )
 
@@ -124,10 +124,12 @@ def extract_item_links(html, list_url):
             path = parts.path.rstrip("/")
             if path == list_path or not path:
                 continue
-            # صفحة تفاصيل = مسار أعمق من مسار القائمة، أو مسار يحمل معرّفًا رقميًا
-            deeper = path.startswith(list_path + "/")
-            has_id = bool(re.search(r"/\d{2,}(?:$|/|-)", path))
-            if not (deeper or has_id):
+            # صفحة التفاصيل تنتهي بمعرّف رقمي، وتقع تحت قسم القرارات/الأنظمة
+            # (في الموقع هي /decisions-and-regulations/<رقم> وليست تحت مسار القائمة)
+            if not re.search(r"/\d{3,}$", path):
+                continue
+            in_section = re.search(r"decision|regulation|rule", path, re.I)
+            if not (in_section or path.startswith(list_path + "/")):
                 continue
             key = absolute.split("#")[0]
             if key in seen:

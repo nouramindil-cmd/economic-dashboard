@@ -54,7 +54,7 @@ ARABIC_DIGITS <- c("\u0660", "\u0661", "\u0662", "\u0663", "\u0664",
 
 NAV_HINTS <- c("/login", "/register", "/search", "/contact", "/about",
                "/privacy", "/terms", "/sitemap", "/rss", "/help", "/faq",
-               "javascript:", "mailto:", "tel:", "#")
+               "/news", "javascript:", "mailto:", "tel:", "#")
 
 # ------------------------------------------------------- أدوات مساعدة
 
@@ -81,16 +81,19 @@ to_ascii_digits <- function(x) {
   x
 }
 
-# إضافة/تحديث معامل الصفحة في الرابط
-with_page <- function(url, page) {
-  if (grepl("[?&]page=", url)) {
-    sub("([?&]page=)[^&]*", paste0("\\1", page), url)
+# إضافة/تحديث أي معامل في الرابط
+add_param <- function(url, param, value) {
+  pattern <- paste0("([?&]", param, "=)[^&]*")
+  if (grepl(pattern, url)) {
+    sub(pattern, paste0("\\1", value), url)
   } else if (grepl("\\?", url)) {
-    paste0(url, "&page=", page)
+    paste0(url, "&", param, "=", value)
   } else {
-    paste0(url, "?page=", page)
+    paste0(url, "?", param, "=", value)
   }
 }
+
+with_page <- function(url, page) add_param(url, "page", page)
 
 # ------------------------------------------------------------- الجلب
 
@@ -153,6 +156,17 @@ first_text <- function(doc, selectors) {
   NA_character_
 }
 
+# هل المسار يخص نظامًا/لائحة/قرارًا؟ (وليس خبرًا أو صفحة تنقل)
+# ملاحظة: صفحات التفاصيل في الموقع تحت /decisions-and-regulations/<رقم>
+# وهو مسار مختلف عن مسار القائمة /decisions/rules-and-regulations
+is_item_path <- function(path, list_path) {
+  if (grepl("/news", path, fixed = TRUE)) return(FALSE)
+  has_id <- grepl("/[0-9]{3,}$", path)
+  if (!has_id) return(FALSE)
+  if (grepl("(decision|regulation|rule)", path, ignore.case = TRUE)) return(TRUE)
+  startsWith(path, paste0(list_path, "/"))
+}
+
 # استخراج روابط صفحات التفاصيل من صفحة القائمة، مع الحفاظ على الترتيب
 extract_item_links <- function(html_txt, list_url) {
   doc <- rvest::read_html(html_txt)
@@ -160,35 +174,67 @@ extract_item_links <- function(html_txt, list_url) {
   list_path <- sub("/$", "", parts$path)
   host <- parts$server
 
-  selectors <- c("a.article-link", ".article-item a", ".article-card a",
-                 ".card a", ".decision-item a", ".list-item a",
-                 "article a", ".results a", "a[href]")
+  anchors <- rvest::html_elements(doc, "a[href]")
+  hrefs <- rvest::html_attr(anchors, "href")
 
-  for (sel in selectors) {
-    anchors <- rvest::html_elements(doc, sel)
-    if (length(anchors) == 0) next
-    hrefs <- rvest::html_attr(anchors, "href")
-    links <- character(0)
-    for (href in hrefs) {
-      if (is.na(href) || !nzchar(trimws(href))) next
-      lower <- tolower(href)
-      if (any(vapply(NAV_HINTS, function(p) grepl(p, lower, fixed = TRUE),
-                     logical(1)))) next
-      abs_url <- xml2::url_absolute(href, list_url)
-      p <- xml2::url_parse(abs_url)
-      if (nzchar(p$server) && p$server != host) next
-      path <- sub("/$", "", p$path)
-      if (!nzchar(path) || path == list_path) next
-      # صفحة تفاصيل = مسار أعمق من مسار القائمة، أو مسار يحمل معرّفًا رقميًا
-      deeper <- startsWith(path, paste0(list_path, "/"))
-      has_id <- grepl("/[0-9]{2,}($|/|-)", path)
-      if (!deeper && !has_id) next
-      key <- sub("#.*$", "", abs_url)
-      if (!(key %in% links)) links <- c(links, key)
-    }
-    if (length(links) > 0) return(links)
+  links <- character(0)
+  for (href in hrefs) {
+    if (is.na(href) || !nzchar(trimws(href))) next
+    lower <- tolower(href)
+    if (any(vapply(NAV_HINTS, function(p) grepl(p, lower, fixed = TRUE),
+                   logical(1)))) next
+    abs_url <- xml2::url_absolute(href, list_url)
+    p <- xml2::url_parse(abs_url)
+    if (nzchar(p$server) && p$server != host) next
+    path <- sub("/$", "", p$path)
+    if (!nzchar(path) || path == list_path) next
+    if (!is_item_path(path, list_path)) next
+    key <- sub("#.*$", "", abs_url)
+    if (!(key %in% links)) links <- c(links, key)
   }
-  character(0)
+  links
+}
+
+# اكتشاف اسم معامل الترقيم تلقائيًا: نجرّب الأسماء الشائعة ونأخذ أول
+# واحد يعطي روابط جديدة فعلًا
+detect_page_param <- function(getter, list_url, first_links, delay = 1) {
+  candidates <- c("page", "pageNumber", "pageIndex", "PageNumber",
+                  "pageNo", "p", "start", "offset")
+  for (param in candidates) {
+    probe <- tryCatch(getter(add_param(list_url, param, 2)),
+                      error = function(e) NULL)
+    if (is.null(probe)) next
+    found <- extract_item_links(probe, list_url)
+    if (length(found) > 0 && length(setdiff(found, first_links)) > 0) {
+      message(sprintf("معامل الترقيم المكتشف: %s", param))
+      return(param)
+    }
+    Sys.sleep(delay)
+  }
+  NULL
+}
+
+# أداة تشخيص: تطبع عناصر الترقيم في الصفحة لمعرفة آلية التنقل
+diagnose_uqn <- function(section = "rules", url = NULL) {
+  if (is.null(url)) url <- paste0(BASE, SECTIONS[[section]])
+  doc <- rvest::read_html(fetch_html(url))
+
+  cat("=== روابط تحتوي على page ===\n")
+  hrefs <- rvest::html_attr(rvest::html_elements(doc, "a[href]"), "href")
+  print(unique(hrefs[grepl("page|Page|[?&]p=", hrefs)]))
+
+  cat("\n=== عناصر الترقيم ===\n")
+  els <- rvest::html_elements(doc, "[class*=pag], [class*=Pag], .pager, nav")
+  txt <- as.character(els)
+  txt <- txt[nchar(txt) < 1500]
+  if (length(txt) == 0) cat("(لا يوجد)\n") else cat(head(txt, 15), sep = "\n\n")
+
+  cat("\n=== أزرار/عناصر فيها أرقام صفحات ===\n")
+  btns <- rvest::html_elements(doc, "button, li, span[class]")
+  labels <- trimws(rvest::html_text2(btns))
+  print(unique(labels[grepl("^[0-9]{1,3}$", labels)]))
+
+  invisible(NULL)
 }
 
 # استخراج النوع والرقم وتاريخ الإقرار من نص مثل:
@@ -342,27 +388,37 @@ scrape_uqn <- function(section = "rules",
 
   max_pages <- if (all_pages) 1e6 else max(1, pages)
 
-  # --- جمع الروابط من صفحات القائمة
-  links <- character(0)
-  page <- 1
-  pages_done <- 0
-  while (pages_done < max_pages) {
-    target <- if (page == 1) url else with_page(url, page)
-    html_txt <- getter(target)
-    found <- extract_item_links(html_txt, url)
-    fresh <- setdiff(found, links)
-    message(sprintf("الصفحة %d: %d رابط (%d جديد)",
-                    page, length(found), length(fresh)))
-    if (length(fresh) == 0) break
-    links <- c(links, fresh)
-    if (limit > 0 && length(links) >= limit) {
-      links <- links[seq_len(limit)]
-      break
+  # --- الصفحة الأولى
+  first_links <- extract_item_links(getter(url), url)
+  message(sprintf("الصفحة 1: %d رابط", length(first_links)))
+  links <- first_links
+
+  need_more <- (all_pages || max_pages > 1) &&
+    (limit == 0 || length(links) < limit) && length(first_links) > 0
+
+  # --- بقية الصفحات (بعد اكتشاف آلية الترقيم)
+  if (need_more) {
+    param <- detect_page_param(getter, url, first_links, delay)
+    if (is.null(param)) {
+      message("تعذّر اكتشاف آلية الترقيم - سيُكتفى بالصفحة الأولى.\n",
+              "شغّل diagnose_uqn() وأرسل المخرجات لتحديد الآلية.")
+    } else {
+      page <- 2
+      while (page <= max_pages) {
+        found <- extract_item_links(getter(add_param(url, param, page)), url)
+        fresh <- setdiff(found, links)
+        message(sprintf("الصفحة %d: %d رابط (%d جديد)",
+                        page, length(found), length(fresh)))
+        if (length(fresh) == 0) break
+        links <- c(links, fresh)
+        if (limit > 0 && length(links) >= limit) break
+        page <- page + 1
+        Sys.sleep(delay)
+      }
     }
-    page <- page + 1
-    pages_done <- pages_done + 1
-    Sys.sleep(delay)
   }
+
+  if (limit > 0 && length(links) > limit) links <- links[seq_len(limit)]
 
   message(sprintf("إجمالي الروابط: %d", length(links)))
 

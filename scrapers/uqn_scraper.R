@@ -333,37 +333,97 @@ links_from_details <- function(list_url) {
   out
 }
 
-# عبارات لا تكاد تخلو منها لائحة أو نظام أو قرار، ولا تظهر في الأخبار
-REG_MARKERS <- c(
-  "يقرر ما يلي", "إن مجلس الوزراء", "بعد الاطلاع على", "رسمنا بما هو آت",
-  "يرسم بما هو آت", "المادة الأولى", "المادة الثانية", "اللائحة التنفيذية",
-  "بناءً على ما عرضه", "وبعد الاطلاع", "يُعمل بهذا النظام", "أحكام هذا النظام"
+# صيغ لا تَرِد إلا في نص نظامي رسمي (وزن عالٍ)
+REG_STRONG <- c(
+  "يقرر ما يلي", "إن مجلس الوزراء", "رسمنا بما هو آت", "يرسم بما هو آت",
+  "بعون الله تعالى", "أمرنا بما هو آت", "وعلى ما قرره مجلس الوزراء"
 )
 
-# عناوين صفحات ليست لوائح (فهارس أعداد الجريدة، الأخبار)
-NOT_REG_TITLES <- c("^العدد\\s*[0-9]", "^عدد\\s*[0-9]")
+# قرائن مساندة: قوية مجتمعةً لا منفردة
+REG_WEAK <- c(
+  "المادة الأولى", "المادة الثانية", "المادة الثالثة",
+  "بعد الاطلاع على المعاملة", "بعد الاطلاع على الأمر",
+  "بعد الاطلاع على المذكرة", "هيئة الخبراء", "اللجنة العامة لمجلس الوزراء",
+  "يُعمل بهذا النظام", "أحكام هذا النظام", "ويلغي كل ما يتعارض معه"
+)
+
+# عناوين ليست لوائح: فهارس الأعداد، وصيغ الأخبار (فعل في أول العنوان)
+NOT_REG_TITLES <- c(
+  "^(طرح|أعلن|أعلنت|استقبل|هنأ|هنّأ|وقّع|وقع|بحث|التقى|شارك|افتتح|دشن|دشّن|زار|ترأس|رعى|كرم|كرّم|أطلق|تلقى|بعث|نظم|نظّم)\\s",
+  "^(يوجه|يهنئ|يستقبل|يبحث|يلتقي|يرعى|يفتتح|يدشن|يترأس|يعلن|يزور|يطلق)\\s",
+  "^(ولي العهد|خادم الحرمين|سمو |معالي |الأمير |الملك )"
+)
 
 # هل السجل المستخرَج لائحة/نظام/قرار فعلًا؟
 #
 # الصفحات الحديثة (/decisions-and-regulations/) تحمل رقمًا في
-# p.article-subtitle، أما صفحات الأرشيف القديم (/details?p=) فلا تحمله
-# إطلاقًا - لذا لا يصح الاعتماد على الرقم وحده، ونفحص نص المحتوى.
+# p.article-subtitle، أما صفحات الأرشيف القديم (/details?p=) فلا تحمله،
+# فنعتمد على وزن القرائن في النص: قرينة قوية واحدة تكفي، أو قرينتان
+# ضعيفتان. عبارة مثل "اللائحة التنفيذية" وحدها لا تكفي لأنها تَرِد في
+# أخبار تتحدث عن مشاريع أنظمة.
+regulation_score <- function(rec) {
+  body <- paste(rec$content_text %||% "", rec$subtitle %||% "")
+  if (!nzchar(trimws(body))) return(0L)
+  strong <- sum(vapply(REG_STRONG, function(m) grepl(m, body, fixed = TRUE),
+                       logical(1)))
+  weak <- sum(vapply(REG_WEAK, function(m) grepl(m, body, fixed = TRUE),
+                     logical(1)))
+  as.integer(2L * strong + weak)
+}
+
 is_regulation <- function(rec) {
   if (is.null(rec)) return(FALSE)
 
   title <- rec$title %||% NA_character_
+  news_title <- FALSE
   if (!is.na(title)) {
-    for (pat in NOT_REG_TITLES) if (grepl(pat, title)) return(FALSE)
+    for (pat in NOT_REG_TITLES) {
+      if (grepl(pat, title)) { news_title <- TRUE; break }
+    }
   }
+  # فهرس عدد: مرفوض دائمًا
+  if (!is.na(title) && grepl("^(العدد|عدد)\\s*[0-9]", title)) return(FALSE)
 
-  # الصيغة الحديثة: رقم صريح في العنوان الفرعي
+  score <- regulation_score(rec)
+
+  # رقم صريح في العنوان الفرعي = الصيغة الحديثة، دليل قاطع
   num <- rec$number %||% NA_character_
   if (!is.na(num) && nzchar(num)) return(TRUE)
 
-  # الأرشيف القديم: نستدل بعبارات النصوص النظامية
-  body <- paste(rec$content_text %||% "", rec$subtitle %||% "")
-  if (!nzchar(trimws(body))) return(FALSE)
-  any(vapply(REG_MARKERS, function(m) grepl(m, body, fixed = TRUE), logical(1)))
+  # عنوان بصيغة خبر يحتاج دليلًا نظاميًا قويًا لتجاوزه
+  if (news_title) return(score >= 4L)
+  score >= 2L
+}
+
+# --------------------------------------------------------------------
+# إعادة فلترة ملف JSON مسحوب مسبقًا - بلا إنترنت وفي ثوانٍ.
+# تفيد لتنقية المخرجات بعد تحسين الفلتر دون إعادة المسح كاملًا.
+refilter_json <- function(path, out = NULL, dry_run = FALSE) {
+  d <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  items <- d$items %||% list()
+  keep <- vapply(items, is_regulation, logical(1))
+
+  message(sprintf("المجموع %d | لوائح %d | مستبعد %d",
+                  length(items), sum(keep), sum(!keep)))
+  if (sum(!keep) > 0) {
+    message("\nعينة من المستبعد:")
+    for (x in head(items[!keep], 10)) {
+      message("  - ", substr(x$title %||% x$url, 1, 70))
+    }
+  }
+  if (dry_run) return(invisible(items[!keep]))
+
+  if (is.null(out)) out <- path
+  d$items <- items[keep]
+  d$count <- sum(keep)
+  d$rejected <- I(vapply(items[!keep],
+                         function(x) x$title %||% x$url %||% "", character(1)))
+  con <- file(out, open = "w", encoding = "UTF-8")
+  on.exit(close(con), add = TRUE)
+  writeLines(jsonlite::toJSON(d, auto_unbox = TRUE, pretty = TRUE,
+                              null = "null", na = "null"), con, useBytes = TRUE)
+  message(sprintf("\nحُفظ %d لائحة في %s", sum(keep), out))
+  invisible(items[keep])
 }
 
 # ------------------------------------------------- المسح بالأرقام

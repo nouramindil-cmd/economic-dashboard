@@ -1087,10 +1087,26 @@ scrape_uqn <- function(section = "rules",
 
       upper <- if (is.na(last_page)) max_pages else min(max_pages, last_page)
       empty_run <- 0L
+      failed_pages <- integer(0)
       page <- 2
       while (page <= upper) {
-        found <- tryCatch(extract_item_links(getter(build(page)), url),
-                          error = function(e) character(0))
+        # فشل الشبكة ليس صفحة فارغة: نعيد المحاولة، وإن أصرّ الفشل
+        # نسجّل الصفحة ونواصل بدل اعتبارها نهاية القائمة
+        found <- NULL
+        for (attempt in 1:3) {
+          found <- tryCatch(extract_item_links(getter(build(page)), url),
+                            error = function(e) NULL)
+          if (!is.null(found)) break
+          Sys.sleep(2 * attempt)
+        }
+        if (is.null(found)) {
+          failed_pages <- c(failed_pages, page)
+          message(sprintf("الصفحة %d: تعذّر جلبها بعد 3 محاولات - سنواصل",
+                          page))
+          page <- page + 1
+          Sys.sleep(delay)
+          next
+        }
 
         # صفحات فارغة متتالية = نهاية فعلية
         if (length(found) == 0) {
@@ -1120,6 +1136,13 @@ scrape_uqn <- function(section = "rules",
       # لا نعرف عدد الصفحات ولم نصل لصفحة فارغة: نُنبّه بدل الصمت
       if (is.na(last_page) && page > upper) {
         message("انتهى الحد الأقصى للصفحات دون بلوغ نهاية مؤكدة.")
+      }
+
+      if (length(failed_pages) > 0) {
+        message(sprintf(
+          "\nتنبيه: تعذّر جلب %d صفحة (%s).\nأعد تشغيل الأمر نفسه لاحقًا لاستكمالها.",
+          length(failed_pages),
+          paste(head(failed_pages, 20), collapse = ", ")))
       }
     }
   }

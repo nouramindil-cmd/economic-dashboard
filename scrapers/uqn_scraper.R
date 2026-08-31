@@ -233,6 +233,19 @@ page_url_builders <- function(list_url) {
   builders
 }
 
+# قراءة رقم آخر صفحة من روابط شريط الترقيم في صفحة القائمة.
+# شريط الترقيم يعرض "1 2 3 ... 143 144"، وروابطه تحمل الرقم صراحة،
+# فهو مصدر أدق بكثير من الاستدلال بتوقف العناصر الجديدة.
+detect_last_page <- function(html_txt) {
+  hits <- unlist(stringr::str_extract_all(
+    html_txt, "[?&](?:pgno|pgNo|PgNo|pageno|page|pageNumber|pageNo)=[0-9]+"))
+  if (length(hits) == 0) return(NA_integer_)
+  nums <- suppressWarnings(as.integer(sub(".*=", "", hits)))
+  nums <- nums[!is.na(nums)]
+  if (length(nums) == 0) return(NA_integer_)
+  max(nums)
+}
+
 # اكتشاف آلية الترقيم: نجرّب كل صيغة على الصفحة 2 ونأخذ أول واحدة
 # تعطي عناصر جديدة فعلًا. تُرجع دالة تبني رابط أي صفحة.
 detect_pagination <- function(getter, list_url, first_links, delay = 1) {
@@ -1046,9 +1059,14 @@ scrape_uqn <- function(section = "rules",
 
   # --- قائمة القسم مباشرة: تعطي بالضبط ما يعرضه الموقع في القسم
   if (discover == "listing") {
-    first_links <- extract_item_links(getter(url), url)
-    message(sprintf("الصفحة 1: %d رابط", length(first_links)))
+    html1 <- getter(url)
+    first_links <- extract_item_links(html1, url)
+    last_page <- detect_last_page(html1)
+    message(sprintf("الصفحة 1: %d رابط%s", length(first_links),
+                    if (is.na(last_page)) ""
+                    else sprintf(" | عدد الصفحات: %d", last_page)))
     links <- first_links
+
     big <- detect_page_size(getter, url, first_links, delay)
     if (!is.null(big)) {
       links <- unique(big)
@@ -1059,19 +1077,42 @@ scrape_uqn <- function(section = "rules",
              "استخدم discover = \"browser\" (يحتاج: install.packages(\"chromote\"))",
              call. = FALSE)
       }
-      seen <- first_links
+
+      upper <- if (is.na(last_page)) max_pages else min(max_pages, last_page)
+      empty_run <- 0L
       page <- 2
-      while (page <= max_pages) {
-        found <- extract_item_links(getter(build(page)), url)
-        if (length(found) == 0) break
-        fresh <- setdiff(found, seen)
-        if (length(fresh) == 0) break
-        seen <- c(seen, fresh)
-        links <- unique(c(links, fresh))
-        message(sprintf("الصفحة %d: %d جديد | المجموع %d",
-                        page, length(fresh), length(links)))
+      while (page <= upper) {
+        found <- tryCatch(extract_item_links(getter(build(page)), url),
+                          error = function(e) character(0))
+
+        # صفحات فارغة متتالية = نهاية فعلية
+        if (length(found) == 0) {
+          empty_run <- empty_run + 1L
+          message(sprintf("الصفحة %d: فارغة (%d متتالية)", page, empty_run))
+          if (empty_run >= 3L) break
+          page <- page + 1
+          Sys.sleep(delay)
+          next
+        }
+        empty_run <- 0L
+
+        # القائمة تكرر بعض العناصر بين الصفحات، فالتكرار وحده
+        # ليس دليلًا على النهاية - نواصل حتى آخر صفحة معروفة
+        fresh <- setdiff(found, links)
+        links <- c(links, fresh)
+        if (length(fresh) > 0 || page %% 10 == 0) {
+          message(sprintf("الصفحة %d/%s: %d جديد | المجموع %d",
+                          page, if (is.na(last_page)) "?" else last_page,
+                          length(fresh), length(links)))
+        }
+        if (limit > 0 && length(links) >= limit) break
         page <- page + 1
         Sys.sleep(delay)
+      }
+
+      # لا نعرف عدد الصفحات ولم نصل لصفحة فارغة: نُنبّه بدل الصمت
+      if (is.na(last_page) && page > upper) {
+        message("انتهى الحد الأقصى للصفحات دون بلوغ نهاية مؤكدة.")
       }
     }
   }

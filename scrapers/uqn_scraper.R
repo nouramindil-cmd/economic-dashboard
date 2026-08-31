@@ -248,6 +248,83 @@ detect_pagination <- function(getter, list_url, first_links, delay = 1) {
   NULL
 }
 
+# ------------------------------------------------ قائمة القسم نفسها
+
+# محاولة إرجاع القائمة كاملة في طلب واحد عبر معامل حجم الصفحة.
+# أرخص بكثير من المرور على 144 صفحة إن دعمه الخادم.
+detect_page_size <- function(getter, list_url, first_links, delay = 0.5) {
+  params <- c("pageSize", "PageSize", "page_size", "size", "limit", "take",
+              "count", "rows", "perPage", "per_page", "pageLength")
+  for (prm in params) {
+    for (val in c(1000L, 500L)) {
+      probe <- tryCatch(getter(add_param(list_url, prm, val)),
+                        error = function(e) NULL)
+      if (is.null(probe)) next
+      found <- extract_item_links(probe, list_url)
+      if (length(found) > length(first_links)) {
+        message(sprintf("معامل حجم الصفحة: %s=%d اعاد %d رابط",
+                        prm, val, length(found)))
+        return(found)
+      }
+      Sys.sleep(delay)
+    }
+  }
+  NULL
+}
+
+# المرور على صفحات القائمة بمتصفح حقيقي.
+# يعمل مهما كانت آلية الترقيم (AJAX أو غيره) لأنه يضغط الأزرار فعليًا.
+collect_links_browser <- function(list_url, max_pages = 200, wait = 2) {
+  .uqn_require("chromote")
+  b <- chromote::ChromoteSession$new()
+  on.exit(try(b$close(), silent = TRUE), add = TRUE)
+
+  read_html_now <- function() {
+    b$Runtime$evaluate("document.documentElement.outerHTML")$result$value
+  }
+
+  b$Page$navigate(list_url)
+  Sys.sleep(wait + 2)
+  links <- extract_item_links(read_html_now(), list_url)
+  message(sprintf("صفحة 1: %d رابط", length(links)))
+
+  click_js <- "(function(n){
+    var all = Array.prototype.slice.call(
+      document.querySelectorAll('a,button,li,span,div'));
+    var vis = function(e){ return e.offsetParent !== null; };
+    var num = all.filter(function(e){
+      return e.textContent.trim() === String(n) && vis(e); });
+    if (num.length) { num[0].click(); return 'num'; }
+    var nx = all.filter(function(e){
+      var s = (e.getAttribute('aria-label')||'') + ' ' +
+              String(e.className||'') + ' ' + e.textContent.trim();
+      return /next|التالي|»|\u203a/i.test(s) && vis(e); });
+    if (nx.length) { nx[0].click(); return 'next'; }
+    return 'none';
+  })(%d)"
+
+  page <- 2
+  while (page <= max_pages) {
+    res <- tryCatch(
+      b$Runtime$evaluate(sprintf(click_js, page))$result$value,
+      error = function(e) "none")
+    if (identical(res, "none")) {
+      message(sprintf("صفحة %d: لا يوجد زر للانتقال - انتهت القائمة.", page))
+      break
+    }
+    Sys.sleep(wait)
+    found <- extract_item_links(read_html_now(), list_url)
+    fresh <- setdiff(found, links)
+    message(sprintf("صفحة %d: %d رابط (%d جديد) | المجموع %d",
+                    page, length(found), length(fresh),
+                    length(links) + length(fresh)))
+    if (length(fresh) == 0) break
+    links <- c(links, fresh)
+    page <- page + 1
+  }
+  links
+}
+
 # ---------------------------------------------------- خريطة الموقع
 
 # قراءة روابط من ملف sitemap (مع النزول داخل فهارس الخرائط)
@@ -731,7 +808,7 @@ scrape_uqn <- function(section = "rules",
                        limit = 0,
                        delay = 1,
                        engine = c("http", "chromote"),
-                       discover = c("auto", "details", "ids", "sitemap", "pages"),
+                       discover = c("auto", "listing", "browser", "details", "ids", "sitemap", "pages"),
                        resume = TRUE,
                        id_from = NULL,
                        id_to = NULL,
@@ -744,7 +821,13 @@ scrape_uqn <- function(section = "rules",
   engine <- match.arg(engine)
   discover <- match.arg(discover)
   # في وضع details نمسح الأرشيف كاملًا، فالفلترة بالمحتوى ضرورية
+  # في وضعَي listing و browser تأتي العناصر من قائمة القسم نفسها،
+  # فهي بالتعريف "لوائح وأنظمة" ولا تحتاج فلترة بقرائن النص
   if (is.null(only_regulations)) only_regulations <- (discover == "details")
+  if (discover %in% c("listing", "browser")) {
+    only_regulations <- FALSE
+    category <- NULL
+  }
   getter <- if (engine == "chromote") fetch_html_chromote else fetch_html
 
   if (is.null(url)) {
@@ -813,6 +896,42 @@ scrape_uqn <- function(section = "rules",
         }
       }
     }
+  }
+
+  # --- قائمة القسم مباشرة: تعطي بالضبط ما يعرضه الموقع في القسم
+  if (discover == "listing") {
+    first_links <- extract_item_links(getter(url), url)
+    message(sprintf("الصفحة 1: %d رابط", length(first_links)))
+    links <- first_links
+    big <- detect_page_size(getter, url, first_links, delay)
+    if (!is.null(big)) {
+      links <- unique(big)
+    } else {
+      build <- detect_pagination(getter, url, first_links, delay)
+      if (is.null(build)) {
+        stop("تعذّر الوصول إلى الصفحات التالية عبر الروابط.\n",
+             "استخدم discover = \"browser\" (يحتاج: install.packages(\"chromote\"))",
+             call. = FALSE)
+      }
+      seen <- first_links
+      page <- 2
+      while (page <= max_pages) {
+        found <- extract_item_links(getter(build(page)), url)
+        if (length(found) == 0) break
+        fresh <- setdiff(found, seen)
+        if (length(fresh) == 0) break
+        seen <- c(seen, fresh)
+        links <- unique(c(links, fresh))
+        message(sprintf("الصفحة %d: %d جديد | المجموع %d",
+                        page, length(fresh), length(links)))
+        page <- page + 1
+        Sys.sleep(delay)
+      }
+    }
+  }
+
+  if (discover == "browser") {
+    links <- collect_links_browser(url, max_pages = if (all_pages) 200 else max_pages)
   }
 
   # --- (3) الأرشيف القديم: يغطي اللوائح التي لا تظهر بالصيغة الحديثة

@@ -555,32 +555,54 @@ UQN_SECTION_PATHS <- c(
   "royal-orders"                     = "أوامر ملكية"
 )
 
-# استخراج تصنيف الصفحة.
-# نجرّب دليلين: رابط القسم الذي تعود إليه الصفحة (أقوى لأنه بنيوي)،
-# ثم نص مسار التنقل (breadcrumb).
+# استخراج تصنيف الصفحة من مسار التنقل (breadcrumb) فقط.
+#
+# تنبيه: لا يصح البحث عن رابط القسم بين روابط الصفحة، لأن القائمة
+# الرئيسية في كل صفحات الموقع تحتوي روابط كل الأقسام - فتُصنَّف كل
+# صفحة (حتى الأخبار) على أنها "لوائح وأنظمة". ولذلك نقتصر هنا على
+# عناصر مسار التنقل نفسها، ونعيد NA إن لم نجدها.
 page_category <- function(doc) {
-  # (1) رابط يشير إلى قسم معروف
-  hrefs <- rvest::html_attr(rvest::html_elements(doc, "a[href]"), "href")
-  hrefs <- hrefs[!is.na(hrefs)]
-  for (key in names(UQN_SECTION_PATHS)) {
-    if (any(grepl(key, hrefs, fixed = TRUE))) {
-      return(list(category = unname(UQN_SECTION_PATHS[[key]]), source = "link"))
-    }
-  }
-
-  # (2) نص مسار التنقل
-  for (sel in c(".breadcrumb", "[class*=breadcrumb]", "[class*=bread]",
-                "[class*=categ]", ".tags", "[class*=tag]", "nav")) {
-    els <- rvest::html_elements(doc, sel)
-    if (length(els) == 0) next
+  selectors <- c(
+    "[itemtype*='BreadcrumbList']", "ol.breadcrumb", "ul.breadcrumb",
+    ".breadcrumb", "[class*='breadcrumb']", "[class*='bread-']",
+    "[class*='category']", "[class*='categ']"
+  )
+  for (sel in selectors) {
+    els <- tryCatch(rvest::html_elements(doc, sel), error = function(e) NULL)
+    if (is.null(els) || length(els) == 0) next
     txt <- clean_text(paste(rvest::html_text2(els), collapse = " | "))
+    if (!nzchar(txt)) next
     for (cat in UQN_CATEGORIES) {
       if (grepl(cat, txt, fixed = TRUE)) {
-        return(list(category = cat, source = "breadcrumb"))
+        return(list(category = cat, source = sel))
       }
     }
   }
   list(category = NA_character_, source = NA_character_)
+}
+
+# يطبع مسار التنقل الخام - لمعرفة بنيته عند تعذّر التعرف على التصنيف
+dump_breadcrumb <- function(url) {
+  doc <- rvest::read_html(fetch_html(url, tries = 1))
+  cat("===", url, "\n")
+  cat("العنوان:", substr(first_text(doc, c("h1.article-title", "h1")), 1, 45), "\n")
+  hit <- FALSE
+  for (sel in c("[itemtype*='BreadcrumbList']", ".breadcrumb",
+                "[class*='breadcrumb']", "[class*='categ']", "nav", "ol", "ul")) {
+    els <- rvest::html_elements(doc, sel)
+    for (e in els) {
+      t <- clean_text(rvest::html_text2(e))
+      if (nzchar(t) && nchar(t) < 120 &&
+          grepl("لوائح|قرارات|مراسيم|أوامر|أنظمة", t)) {
+        cat("  [", sel, "] ", t, "\n", sep = "")
+        cat("    HTML: ", substr(gsub("\\s+", " ", as.character(e)), 1, 220), "\n", sep = "")
+        hit <- TRUE
+      }
+    }
+    if (hit) break
+  }
+  if (!hit) cat("  لم يُعثر على مسار تنقل يحمل اسم قسم.\n")
+  invisible(NULL)
 }
 
 # معاينة سريعة: تطبع تصنيف عدد من الصفحات للتحقق قبل مسح كامل

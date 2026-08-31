@@ -659,6 +659,68 @@ is_regulation <- function(rec) {
   score >= 2L
 }
 
+# إعادة جلب العناصر التي خرجت بلا نص (فشل شبكة أو بنية مختلفة).
+# تعمل على الملف الموجود ولا تعيد المسح كاملًا.
+refetch_empty <- function(path, out = NULL, delay = 0.5, engine = "http",
+                          pdf = FALSE) {
+  getter <- if (engine == "chromote") fetch_html_chromote else fetch_html
+  d <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  items <- d$items %||% list()
+
+  empty_idx <- which(vapply(items, function(x)
+    !nzchar(x$content_text %||% ""), logical(1)))
+  message(sprintf("عناصر بلا نص: %d من %d", length(empty_idx), length(items)))
+  if (length(empty_idx) == 0) return(invisible(items))
+
+  fixed <- 0L
+  still <- character(0)
+  for (k in seq_along(empty_idx)) {
+    i <- empty_idx[k]
+    u <- items[[i]]$url %||% ""
+    if (!nzchar(u)) next
+    rec <- tryCatch(parse_detail(getter(u), u), error = function(e) NULL)
+
+    # المتن في مرفق PDF: ننزّله ونستخرج نصه
+    if (pdf && !is.null(rec) && !nzchar(rec$content_text %||% "")) {
+      atts <- rec$attachments
+      pdfs <- atts[grepl("\\.pdf($|\\?)", atts, ignore.case = TRUE)]
+      if (length(pdfs) > 0) {
+        txt <- tryCatch(pdf_to_text(pdfs[1]), error = function(e) "")
+        if (nzchar(txt)) {
+          rec$content_text <- txt
+          rec$content_paragraphs <- I(
+            Filter(nzchar, trimws(strsplit(txt, "\n{2,}")[[1]])))
+          rec$content_source <- "pdf"
+        }
+      }
+    }
+
+    if (!is.null(rec) && nzchar(rec$content_text %||% "")) {
+      rec$order <- items[[i]]$order %||% i
+      items[[i]] <- rec
+      fixed <- fixed + 1L
+      message(sprintf("[%d/%d] ✔ %s (%d حرف)", k, length(empty_idx),
+                      substr(rec$title %||% u, 1, 45), nchar(rec$content_text)))
+    } else {
+      still <- c(still, u)
+      message(sprintf("[%d/%d] ✘ ما زال بلا نص: %s", k, length(empty_idx),
+                      substr(items[[i]]$title %||% u, 1, 45)))
+    }
+    Sys.sleep(delay)
+  }
+
+  if (is.null(out)) out <- path
+  d$items <- items
+  d$count <- length(items)
+  con <- file(out, open = "w", encoding = "UTF-8")
+  on.exit(close(con), add = TRUE)
+  writeLines(jsonlite::toJSON(d, auto_unbox = TRUE, pretty = TRUE,
+                              null = "null", na = "null"), con, useBytes = TRUE)
+  message(sprintf("\nأُصلح %d | بقي بلا نص %d | حُفظ في %s",
+                  fixed, length(still), out))
+  invisible(still)
+}
+
 # --------------------------------------------------------------------
 # إعادة فلترة ملف JSON مسحوب مسبقًا - بلا إنترنت وفي ثوانٍ.
 # تفيد لتنقية المخرجات بعد تحسين الفلتر دون إعادة المسح كاملًا.
@@ -887,12 +949,76 @@ preview_categories <- function(urls, n = 10) {
   invisible(NULL)
 }
 
+# استخراج احتياطي حين تغيب الحاويات المعروفة.
+#
+# لا يصح أخذ أكبر كتلة نصية: أكبرها في هذا الموقع هو .container الذي
+# يضم القائمة والتذييل (25-40 ألف حرف). نختار بدلًا من ذلك الكتلة
+# الأغنى بنص الفقرات والأفقر بالروابط - وهذا وصف متن المقال.
+extract_fallback_body <- function(doc) {
+  cands <- rvest::html_elements(doc, "div,section,article,td")
+  if (length(cands) == 0) return(NULL)
+  best <- NULL
+  best_score <- 100      # حد أدنى حتى لا نلتقط فتاتًا
+  for (e in cands) {
+    ps <- rvest::html_elements(e, "p")
+    if (length(ps) == 0) next
+    tlen <- sum(nchar(rvest::html_text2(ps)))
+    links <- rvest::html_elements(e, "a")
+    llen <- if (length(links) > 0) sum(nchar(rvest::html_text2(links))) else 0
+    score <- tlen - 2 * llen          # الروابط دليل قائمة لا متن
+    if (score > best_score) { best_score <- score; best <- e }
+  }
+  best
+}
+
+# الوثائق الفنية الكبيرة (الأكواد، المواصفات القياسية، الأدلة، جداول
+# التعرفة) تُنشر كمرفق PDF لا كنص في الصفحة، فتخرج الصفحة بلا متن.
+# نلتقط روابط المرفقات ليتسنى استخراج نصها لاحقًا.
+extract_attachments <- function(doc, base_url) {
+  hrefs <- rvest::html_attr(rvest::html_elements(doc, "a[href]"), "href")
+  hrefs <- hrefs[!is.na(hrefs) & nzchar(hrefs)]
+  keep <- grepl("\\.(pdf|docx?|xlsx?|zip)($|\\?)", hrefs, ignore.case = TRUE) |
+    grepl("(download|attach|uploads|files|media)/", hrefs, ignore.case = TRUE)
+  if (!any(keep)) return(character(0))
+  unique(vapply(hrefs[keep], function(h) xml2::url_absolute(h, base_url),
+                character(1), USE.NAMES = FALSE))
+}
+
+# تنزيل ملف ثنائي (مرفق) إلى مسار مؤقت
+fetch_binary <- function(url, dest, timeout = 120) {
+  if (.UQN_HTTP == "httr2") {
+    req <- httr2::request(url)
+    req <- httr2::req_user_agent(req, UA)
+    req <- httr2::req_timeout(req, timeout)
+    resp <- httr2::req_perform(req)
+    writeBin(httr2::resp_body_raw(resp), dest)
+  } else {
+    resp <- httr::GET(url, httr::user_agent(UA), httr::timeout(timeout))
+    httr::stop_for_status(resp)
+    writeBin(httr::content(resp, as = "raw"), dest)
+  }
+  dest
+}
+
+# استخراج نص مرفق PDF (يتطلب حزمة pdftools)
+pdf_to_text <- function(url) {
+  if (!requireNamespace("pdftools", quietly = TRUE)) {
+    stop("تحتاج: install.packages(\"pdftools\")", call. = FALSE)
+  }
+  tmp <- tempfile(fileext = ".pdf")
+  on.exit(unlink(tmp), add = TRUE)
+  fetch_binary(url, tmp)
+  pages <- pdftools::pdf_text(tmp)
+  clean_text(paste(pages, collapse = "\n\n"))
+}
+
 # استخراج حقول عنصر واحد (نظام / لائحة / قرار) من صفحة التفاصيل
 parse_detail <- function(html_txt, url) {
   doc <- rvest::read_html(html_txt)
 
   title <- first_text(doc, c("h1.article-title", ".article-title", "h1"))
   cat_info <- page_category(doc)
+  attachments <- extract_attachments(doc, url)
   publish_raw <- first_text(doc, c(".date-item span", ".date-item",
                                    ".article-date", "time"))
   pub <- parse_publish_dates(publish_raw)
@@ -908,10 +1034,13 @@ parse_detail <- function(html_txt, url) {
 
   body <- NULL
   for (sel in c("article#article-content", ".article-desc", "article",
-                ".article-body")) {
+                ".article-body", ".article-text", ".news-details")) {
     els <- rvest::html_elements(doc, sel)
-    if (length(els) > 0) { body <- els[[1]]; break }
+    if (length(els) > 0 && nzchar(clean_text(rvest::html_text2(els[[1]])))) {
+      body <- els[[1]]; break
+    }
   }
+  if (is.null(body)) body <- extract_fallback_body(doc)
 
   paragraphs <- character(0)
   content_html <- NA_character_
@@ -950,7 +1079,11 @@ parse_detail <- function(html_txt, url) {
     # I() يمنع jsonlite من تحويل قائمة من عنصر واحد إلى نص مفرد
     content_paragraphs     = I(paragraphs),
     content_text           = paste(paragraphs, collapse = "\n\n"),
-    content_html           = content_html
+    content_html           = content_html,
+    attachments            = I(attachments),
+    content_source         = if (length(paragraphs) > 0) "html"
+                             else if (length(attachments) > 0) "attachment"
+                             else NA_character_
   )
 }
 

@@ -82,6 +82,30 @@ scrape_uqn(section = "rules", all_pages = TRUE, engine = "chromote",
            out = "data/uqn_rules.json")
 ```
 
+### سحب كل شيء: `discover = "ids"`
+
+خريطة الموقع تسرد جزءًا من الأنظمة فقط، والترقيم في الموقع يعمل عبر
+AJAX (لاحظ `Disallow: /*page=` و `/ajax/` في robots.txt)، لذا لا يكفيان
+لجلب كل العناصر. لكن صفحات التفاصيل تحمل أرقامًا متسلسلة:
+
+```
+https://www.uqn.gov.sa/decisions-and-regulations/4001678
+```
+
+فوضع `ids` يأخذ الأرقام المعروفة كمرجع، ثم يمر على النطاق الرقمي كاملًا:
+
+```r
+scrape_uqn(section = "rules", discover = "ids", out = "uqn_rules.json")
+```
+
+الأرقام غير الموجودة (404) تُسجَّل في حقل `skipped` فلا تُفحص مرة أخرى
+عند إعادة التشغيل. ولتحديد النطاق يدويًا:
+
+```r
+scrape_uqn(section = "rules", discover = "ids",
+           id_from = 4000000, id_to = 4002000, out = "uqn_rules.json")
+```
+
 ### معاملات `scrape_uqn()`
 
 | المعامل | الوصف |
@@ -92,6 +116,9 @@ scrape_uqn(section = "rules", all_pages = TRUE, engine = "chromote",
 | `pages` | عدد صفحات القائمة إذا لم تستخدم `all_pages` |
 | `limit` | حد أقصى لعدد العناصر (0 = بلا حد) |
 | `engine` | `"http"` أو `"chromote"` |
+| `discover` | `"auto"` أو `"ids"` (الأشمل) أو `"sitemap"` أو `"pages"` |
+| `resume` | `TRUE` لمتابعة ملف موجود بدل إعادة السحب |
+| `id_from` / `id_to` / `id_pad` | حدود النطاق الرقمي في وضع `ids` |
 | `delay` | ثوانٍ بين الطلبات |
 | `list_only` | `TRUE` لطباعة الروابط فقط |
 | `out` | مسار ملف JSON الناتج |

@@ -99,7 +99,9 @@ with_page <- function(url, page) add_param(url, "page", page)
 
 # ------------------------------------------------------------- الجلب
 
-# جلب صفحة مع إعادة المحاولة بتأخير متضاعف
+# جلب صفحة مع إعادة المحاولة بتأخير متضاعف.
+# أخطاء 4xx (مثل 404) تفشل فورًا دون إعادة محاولة - مهم عند مسح
+# نطاق أرقام فيه فجوات، وإلا استغرق كل رقم مفقود عدة ثوانٍ.
 fetch_html <- function(url, tries = 4, timeout = 30) {
   delay <- 2
   last_err <- NULL
@@ -110,8 +112,10 @@ fetch_html <- function(url, tries = 4, timeout = 30) {
         req <- httr2::req_user_agent(req, UA)
         req <- httr2::req_headers(req, `Accept-Language` = "ar,en;q=0.8")
         req <- httr2::req_timeout(req, timeout)
+        req <- httr2::req_error(req, is_error = function(resp) FALSE)
         resp <- httr2::req_perform(req)
-        httr2::resp_body_string(resp)
+        list(status = httr2::resp_status(resp),
+             body = httr2::resp_body_string(resp))
       } else {
         resp <- httr::GET(
           url,
@@ -119,14 +123,24 @@ fetch_html <- function(url, tries = 4, timeout = 30) {
           httr::add_headers(`Accept-Language` = "ar,en;q=0.8"),
           httr::timeout(timeout)
         )
-        httr::stop_for_status(resp)
-        httr::content(resp, as = "text", encoding = "UTF-8")
+        list(status = httr::status_code(resp),
+             body = httr::content(resp, as = "text", encoding = "UTF-8"))
       }
     }, error = function(e) {
       last_err <<- conditionMessage(e)
       NULL
     })
-    if (!is.null(result)) return(result)
+
+    if (!is.null(result)) {
+      if (result$status < 400) return(result$body)
+      if (result$status < 500) {
+        stop(structure(
+          class = c("uqn_missing", "error", "condition"),
+          list(message = sprintf("HTTP %d", result$status), call = NULL)
+        ))
+      }
+      last_err <- sprintf("HTTP %d", result$status)
+    }
     if (i < tries) Sys.sleep(delay)
     delay <- delay * 2
   }
@@ -293,6 +307,32 @@ links_from_sitemap <- function(list_url) {
   unname(all_urls[keep])
 }
 
+# ------------------------------------------------- المسح بالأرقام
+
+# صفحات التفاصيل تحمل أرقامًا متسلسلة (.../decisions-and-regulations/4001678).
+# خريطة الموقع تسرد جزءًا منها فقط، والترقيم يعمل عبر AJAX، لذا فأضمن
+# طريقة لجلب كل العناصر هي المرور على النطاق الرقمي كاملًا.
+links_from_ids <- function(seeds, from = NULL, to = NULL, pad = 0) {
+  if (length(seeds) == 0 && (is.null(from) || is.null(to))) {
+    stop("لا توجد أرقام مرجعية لتحديد النطاق.", call. = FALSE)
+  }
+
+  prefix <- NA_character_
+  ids <- integer(0)
+  if (length(seeds) > 0) {
+    m <- stringr::str_match(seeds, "^(.*/)([0-9]+)/?$")
+    ok <- !is.na(m[, 3])
+    prefix <- names(sort(table(m[ok, 2]), decreasing = TRUE))[1]
+    ids <- as.integer(m[ok, 3])
+  }
+
+  lo <- if (is.null(from)) min(ids) - pad else from
+  hi <- if (is.null(to))   max(ids) + pad else to
+
+  message(sprintf("مسح النطاق الرقمي %d ... %d (%d رابط)", lo, hi, hi - lo + 1))
+  paste0(prefix, seq.int(lo, hi))
+}
+
 # أداة تشخيص: تطبع عناصر الترقيم في الصفحة لمعرفة آلية التنقل
 diagnose_uqn <- function(section = "rules", url = NULL) {
   if (is.null(url)) url <- paste0(BASE, SECTIONS[[section]])
@@ -451,8 +491,11 @@ scrape_uqn <- function(section = "rules",
                        limit = 0,
                        delay = 1,
                        engine = c("http", "chromote"),
-                       discover = c("auto", "sitemap", "pages"),
+                       discover = c("auto", "ids", "sitemap", "pages"),
                        resume = TRUE,
+                       id_from = NULL,
+                       id_to = NULL,
+                       id_pad = 50,
                        list_only = FALSE,
                        out = NULL) {
 
@@ -473,12 +516,12 @@ scrape_uqn <- function(section = "rules",
   links <- character(0)
 
   # --- (1) خريطة الموقع: سريعة لكنها قد تكون ناقصة
-  if (discover %in% c("auto", "sitemap")) {
+  if (discover %in% c("auto", "sitemap", "ids")) {
     sm <- tryCatch(links_from_sitemap(url), error = function(e) character(0))
     if (length(sm) > 0) {
       message(sprintf("عبر خريطة الموقع: %d عنصر", length(sm)))
       links <- unique(c(links, sm))
-    } else if (discover == "sitemap") {
+    } else if (discover %in% c("sitemap")) {
       stop("خريطة الموقع لا تحتوي على عناصر. جرّب discover = \"pages\"",
            call. = FALSE)
     } else {
@@ -488,12 +531,13 @@ scrape_uqn <- function(section = "rules",
 
   # --- (2) التنقل بين صفحات القائمة، وتُدمج نتائجه مع الخريطة
   #     (الخريطة قد تسرد جزءًا فقط، فالدمج يضمن التغطية الكاملة)
-  if (discover %in% c("auto", "pages")) {
+  if (discover %in% c("auto", "pages", "ids")) {
     first_links <- extract_item_links(getter(url), url)
     message(sprintf("الصفحة 1: %d رابط", length(first_links)))
     links <- unique(c(links, first_links))
 
-    if ((all_pages || max_pages > 1) && length(first_links) > 0) {
+    if (discover != "ids" && (all_pages || max_pages > 1) &&
+        length(first_links) > 0) {
       build <- detect_pagination(getter, url, first_links, delay)
       if (is.null(build)) {
         message("تعذّر اكتشاف آلية الترقيم.\n",
@@ -527,6 +571,12 @@ scrape_uqn <- function(section = "rules",
     }
   }
 
+  # --- (3) المسح بالأرقام: يغطي ما تفوّته الخريطة و AJAX
+  if (discover == "ids") {
+    links <- links_from_ids(links, from = id_from, to = id_to,
+                            pad = id_pad)
+  }
+
   if (limit > 0 && length(links) > limit) links <- links[seq_len(limit)]
 
   message(sprintf("إجمالي الروابط: %d", length(links)))
@@ -542,13 +592,14 @@ scrape_uqn <- function(section = "rules",
     dir.create(out_dir, recursive = TRUE)
   }
 
-  save_json <- function(items) {
+  save_json <- function(items, skipped = character(0)) {
     payload <- list(
       source_url = url,
       section    = section,
       scraped_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
       count      = length(items),
-      items      = items
+      items      = items,
+      skipped    = I(skipped)
     )
     json <- jsonlite::toJSON(payload, auto_unbox = TRUE, pretty = TRUE,
                              null = "null", na = "null")
@@ -560,6 +611,7 @@ scrape_uqn <- function(section = "rules",
   # --- استئناف: تخطّي ما سُحب سابقًا إذا كان الملف موجودًا
   items <- list()
   done <- character(0)
+  skipped <- character(0)
   if (resume && file.exists(out)) {
     prev <- tryCatch(jsonlite::fromJSON(out, simplifyVector = FALSE),
                      error = function(e) NULL)
@@ -568,9 +620,13 @@ scrape_uqn <- function(section = "rules",
       done <- vapply(items, function(x) x$url %||% "", character(1))
       message(sprintf("استئناف: %d عنصر محفوظ مسبقًا سيُتخطى", length(done)))
     }
+    if (!is.null(prev$skipped) && length(prev$skipped) > 0) {
+      skipped <- unlist(prev$skipped)
+      message(sprintf("و%d رابط غير موجود لن يُعاد فحصه", length(skipped)))
+    }
   }
 
-  todo <- setdiff(links, done)
+  todo <- setdiff(links, c(done, skipped))
   if (length(todo) == 0) {
     message("كل العناصر مسحوبة مسبقًا - لا شيء جديد.")
     return(invisible(items))
@@ -579,28 +635,42 @@ scrape_uqn <- function(section = "rules",
   # --- سحب صفحات التفاصيل
   for (i in seq_along(todo)) {
     link <- todo[i]
-    record <- tryCatch({
-      rec <- parse_detail(getter(link), link)
-      rec$order <- length(items) + 1
-      message(sprintf("[%d/%d] %s", i, length(todo),
-                      if (is.na(rec$title)) link else rec$title))
-      rec
-    }, error = function(e) {
-      message(sprintf("[%d/%d] فشل %s : %s", i, length(todo),
-                      link, conditionMessage(e)))
-      list(url = link, order = length(items) + 1, error = conditionMessage(e))
-    })
-    items[[length(items) + 1]] <- record
 
-    # حفظ دوري حتى لا يضيع التقدّم إذا انقطع التنفيذ
+    html_txt <- tryCatch(getter(link), error = function(e) {
+      if (inherits(e, "uqn_missing")) NA_character_ else stop(e)
+    })
+
+    # رقم غير موجود (404) - نسجّله كمتخطّى حتى لا يُفحص مجددًا
+    if (length(html_txt) == 1 && is.na(html_txt)) {
+      skipped <- c(skipped, link)
+    } else {
+      record <- tryCatch({
+        rec <- parse_detail(html_txt, link)
+        if (is.na(rec$title)) NULL else rec
+      }, error = function(e) {
+        list(url = link, error = conditionMessage(e))
+      })
+
+      if (is.null(record)) {
+        skipped <- c(skipped, link)            # صفحة بلا عنوان = ليست عنصرًا
+      } else {
+        record$order <- length(items) + 1
+        items[[length(items) + 1]] <- record
+        message(sprintf("[%d/%d] (%d) %s", i, length(todo), length(items),
+                        record$title %||% link))
+      }
+    }
+
     if (i %% 25 == 0) {
-      save_json(items)
-      message(sprintf("--- حُفظ التقدّم: %d عنصر ---", length(items)))
+      save_json(items, skipped)
+      message(sprintf("--- التقدّم: %d عنصر، %d متخطّى، %d متبقٍ ---",
+                      length(items), length(skipped), length(todo) - i))
     }
     Sys.sleep(delay)
   }
 
-  save_json(items)
-  message(sprintf("تم الحفظ في %s (%d عنصر)", out, length(items)))
+  save_json(items, skipped)
+  message(sprintf("تم الحفظ في %s (%d عنصر، %d متخطّى)",
+                  out, length(items), length(skipped)))
   invisible(items)
 }

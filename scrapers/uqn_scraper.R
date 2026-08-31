@@ -398,10 +398,25 @@ is_regulation <- function(rec) {
 # --------------------------------------------------------------------
 # إعادة فلترة ملف JSON مسحوب مسبقًا - بلا إنترنت وفي ثوانٍ.
 # تفيد لتنقية المخرجات بعد تحسين الفلتر دون إعادة المسح كاملًا.
-refilter_json <- function(path, out = NULL, dry_run = FALSE) {
+refilter_json <- function(path, out = NULL, dry_run = FALSE,
+                          category = "لوائح وأنظمة") {
   d <- jsonlite::fromJSON(path, simplifyVector = FALSE)
   items <- d$items %||% list()
-  keep <- vapply(items, is_regulation, logical(1))
+
+  keep <- vapply(items, function(x) {
+    cc <- x$category %||% NA_character_
+    if (!is.null(category) && !is.na(cc)) return(identical(cc, category))
+    is_regulation(x)
+  }, logical(1))
+
+  cats <- vapply(items, function(x) x$category %||% NA_character_, character(1))
+  if (any(!is.na(cats))) {
+    message("التصنيفات الموجودة في الملف:")
+    print(table(cats, useNA = "ifany"))
+  } else {
+    message("لا يوجد حقل تصنيف في هذا الملف (سُحب بنسخة أقدم) - ",
+            "الفلترة بقرائن النص فقط.")
+  }
 
   message(sprintf("المجموع %d | لوائح %d | مستبعد %d",
                   length(items), sum(keep), sum(!keep)))
@@ -525,11 +540,68 @@ parse_publish_dates <- function(txt) {
   out
 }
 
+# تصنيفات الموقع كما تظهر في مسار التنقل، ومسارات أقسامها
+UQN_CATEGORIES <- c(
+  "لوائح وأنظمة", "قرارات وزارية", "قرارات مجلس الوزراء",
+  "مراسيم ملكية", "أوامر ملكية", "أوامر سامية",
+  "اتفاقيات ومعاهدات", "تعاميم"
+)
+
+UQN_SECTION_PATHS <- c(
+  "rules-and-regulations"            = "لوائح وأنظمة",
+  "ministerial-decisions"            = "قرارات وزارية",
+  "council-of-ministers-decisions"   = "قرارات مجلس الوزراء",
+  "royal-decrees"                    = "مراسيم ملكية",
+  "royal-orders"                     = "أوامر ملكية"
+)
+
+# استخراج تصنيف الصفحة.
+# نجرّب دليلين: رابط القسم الذي تعود إليه الصفحة (أقوى لأنه بنيوي)،
+# ثم نص مسار التنقل (breadcrumb).
+page_category <- function(doc) {
+  # (1) رابط يشير إلى قسم معروف
+  hrefs <- rvest::html_attr(rvest::html_elements(doc, "a[href]"), "href")
+  hrefs <- hrefs[!is.na(hrefs)]
+  for (key in names(UQN_SECTION_PATHS)) {
+    if (any(grepl(key, hrefs, fixed = TRUE))) {
+      return(list(category = unname(UQN_SECTION_PATHS[[key]]), source = "link"))
+    }
+  }
+
+  # (2) نص مسار التنقل
+  for (sel in c(".breadcrumb", "[class*=breadcrumb]", "[class*=bread]",
+                "[class*=categ]", ".tags", "[class*=tag]", "nav")) {
+    els <- rvest::html_elements(doc, sel)
+    if (length(els) == 0) next
+    txt <- clean_text(paste(rvest::html_text2(els), collapse = " | "))
+    for (cat in UQN_CATEGORIES) {
+      if (grepl(cat, txt, fixed = TRUE)) {
+        return(list(category = cat, source = "breadcrumb"))
+      }
+    }
+  }
+  list(category = NA_character_, source = NA_character_)
+}
+
+# معاينة سريعة: تطبع تصنيف عدد من الصفحات للتحقق قبل مسح كامل
+preview_categories <- function(urls, n = 10) {
+  for (u in head(urls, n)) {
+    h <- tryCatch(fetch_html(u, tries = 1), error = function(e) NULL)
+    if (is.null(h)) { message("مفقود: ", u); next }
+    doc <- rvest::read_html(h)
+    cc <- page_category(doc)
+    message(sprintf("[%s] %s", cc$category %||% "؟",
+                    substr(first_text(doc, c("h1.article-title", "h1")), 1, 55)))
+  }
+  invisible(NULL)
+}
+
 # استخراج حقول عنصر واحد (نظام / لائحة / قرار) من صفحة التفاصيل
 parse_detail <- function(html_txt, url) {
   doc <- rvest::read_html(html_txt)
 
   title <- first_text(doc, c("h1.article-title", ".article-title", "h1"))
+  cat_info <- page_category(doc)
   publish_raw <- first_text(doc, c(".date-item span", ".date-item",
                                    ".article-date", "time"))
   pub <- parse_publish_dates(publish_raw)
@@ -576,6 +648,7 @@ parse_detail <- function(html_txt, url) {
   list(
     url                    = url,
     title                  = title,
+    category               = cat_info$category,
     type                   = info$type,
     number                 = info$number,
     issue_date_hijri       = info$date_hijri,
@@ -616,6 +689,7 @@ scrape_uqn <- function(section = "rules",
                        id_to = NULL,
                        id_pad = 50,
                        only_regulations = NULL,
+                       category = "لوائح وأنظمة",
                        list_only = FALSE,
                        out = NULL) {
 
@@ -776,7 +850,12 @@ scrape_uqn <- function(section = "rules",
       record <- tryCatch({
         rec <- parse_detail(html_txt, link)
         if (is.na(rec$title)) NULL
-        else if (only_regulations && !is_regulation(rec)) NULL  # خبر/إعلان
+        # التصنيف من الموقع دليل قاطع: نعتمده متى توفّر
+        else if (!is.null(category) && !is.na(rec$category) &&
+                 !identical(rec$category, category)) NULL
+        # وإن غاب التصنيف نرجع إلى قرائن النص
+        else if (only_regulations && is.na(rec$category) &&
+                 !is_regulation(rec)) NULL
         else rec
       }, error = function(e) {
         list(url = link, error = conditionMessage(e))

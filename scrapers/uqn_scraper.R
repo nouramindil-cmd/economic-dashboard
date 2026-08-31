@@ -197,19 +197,37 @@ extract_item_links <- function(html_txt, list_url) {
   links
 }
 
-# اكتشاف اسم معامل الترقيم تلقائيًا: نجرّب الأسماء الشائعة ونأخذ أول
-# واحد يعطي روابط جديدة فعلًا
-detect_page_param <- function(getter, list_url, first_links, delay = 1) {
-  candidates <- c("page", "pageNumber", "pageIndex", "PageNumber",
-                  "pageNo", "p", "start", "offset")
-  for (param in candidates) {
-    probe <- tryCatch(getter(add_param(list_url, param, 2)),
-                      error = function(e) NULL)
+# كل الصيغ المحتملة لرابط الصفحة رقم n: معاملات استعلام ومسارات
+page_url_builders <- function(list_url) {
+  base_path <- sub("/$", "", list_url)
+  params <- c("page", "pageNumber", "pageIndex", "PageNumber", "Page",
+              "pageNo", "pageNum", "p", "pg", "start", "offset")
+
+  builders <- lapply(params, function(prm) {
+    force(prm)
+    function(n) add_param(list_url, prm, n)
+  })
+  names(builders) <- paste0("?", params, "=n")
+
+  # صيغ المسارات - وهي شائعة ولم تكن مُجرّبة سابقًا
+  builders[["/page/n"]] <- function(n) paste0(base_path, "/page/", n)
+  builders[["/n"]]      <- function(n) paste0(base_path, "/", n)
+  builders[["/p/n"]]    <- function(n) paste0(base_path, "/p/", n)
+  builders
+}
+
+# اكتشاف آلية الترقيم: نجرّب كل صيغة على الصفحة 2 ونأخذ أول واحدة
+# تعطي عناصر جديدة فعلًا. تُرجع دالة تبني رابط أي صفحة.
+detect_pagination <- function(getter, list_url, first_links, delay = 1) {
+  builders <- page_url_builders(list_url)
+  for (nm in names(builders)) {
+    build <- builders[[nm]]
+    probe <- tryCatch(getter(build(2)), error = function(e) NULL)
     if (is.null(probe)) next
     found <- extract_item_links(probe, list_url)
     if (length(found) > 0 && length(setdiff(found, first_links)) > 0) {
-      message(sprintf("معامل الترقيم المكتشف: %s", param))
-      return(param)
+      message(sprintf("آلية الترقيم المكتشفة: %s", nm))
+      return(build)
     }
     Sys.sleep(delay)
   }
@@ -454,42 +472,53 @@ scrape_uqn <- function(section = "rules",
 
   links <- character(0)
 
-  # --- (1) خريطة الموقع: أسرع وأشمل طريقة لجلب كل العناصر دفعة واحدة
+  # --- (1) خريطة الموقع: سريعة لكنها قد تكون ناقصة
   if (discover %in% c("auto", "sitemap")) {
-    links <- tryCatch(links_from_sitemap(url), error = function(e) character(0))
-    if (length(links) > 0) {
-      message(sprintf("عبر خريطة الموقع: %d عنصر", length(links)))
+    sm <- tryCatch(links_from_sitemap(url), error = function(e) character(0))
+    if (length(sm) > 0) {
+      message(sprintf("عبر خريطة الموقع: %d عنصر", length(sm)))
+      links <- unique(c(links, sm))
     } else if (discover == "sitemap") {
       stop("خريطة الموقع لا تحتوي على عناصر. جرّب discover = \"pages\"",
            call. = FALSE)
     } else {
-      message("لا توجد خريطة موقع مفيدة - سنتنقل بين الصفحات.")
+      message("خريطة الموقع لم تُفد - نعتمد على التنقل بين الصفحات.")
     }
   }
 
-  # --- (2) التنقل بين صفحات القائمة
-  if (length(links) == 0) {
+  # --- (2) التنقل بين صفحات القائمة، وتُدمج نتائجه مع الخريطة
+  #     (الخريطة قد تسرد جزءًا فقط، فالدمج يضمن التغطية الكاملة)
+  if (discover %in% c("auto", "pages")) {
     first_links <- extract_item_links(getter(url), url)
     message(sprintf("الصفحة 1: %d رابط", length(first_links)))
-    links <- first_links
+    links <- unique(c(links, first_links))
 
-    need_more <- (all_pages || max_pages > 1) &&
-      (limit == 0 || length(links) < limit) && length(first_links) > 0
-
-    if (need_more) {
-      param <- detect_page_param(getter, url, first_links, delay)
-      if (is.null(param)) {
+    if ((all_pages || max_pages > 1) && length(first_links) > 0) {
+      build <- detect_pagination(getter, url, first_links, delay)
+      if (is.null(build)) {
         message("تعذّر اكتشاف آلية الترقيم.\n",
                 "جرّب engine = \"chromote\" أو شغّل diagnose_uqn().")
       } else {
+        # seen_pages منفصل عن links: التوقف يعتمد على تكرار نتائج
+        # الترقيم نفسه، لا على ما سبق أن جلبته الخريطة
+        seen_pages <- first_links
         page <- 2
         while (page <= max_pages) {
-          found <- extract_item_links(getter(add_param(url, param, page)), url)
-          fresh <- setdiff(found, links)
-          message(sprintf("الصفحة %d: %d رابط (%d جديد)",
-                          page, length(found), length(fresh)))
-          if (length(fresh) == 0) break
-          links <- c(links, fresh)
+          found <- tryCatch(extract_item_links(getter(build(page)), url),
+                            error = function(e) character(0))
+          if (length(found) == 0) {
+            message(sprintf("الصفحة %d: فارغة - انتهت النتائج.", page))
+            break
+          }
+          fresh <- setdiff(found, seen_pages)
+          if (length(fresh) == 0) {
+            message(sprintf("الصفحة %d: تكرار - انتهت النتائج.", page))
+            break
+          }
+          seen_pages <- c(seen_pages, fresh)
+          links <- unique(c(links, fresh))
+          message(sprintf("الصفحة %d: %d رابط (%d جديد) | المجموع %d",
+                          page, length(found), length(fresh), length(links)))
           if (limit > 0 && length(links) >= limit) break
           page <- page + 1
           Sys.sleep(delay)

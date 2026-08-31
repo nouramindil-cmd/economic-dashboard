@@ -307,6 +307,65 @@ links_from_sitemap <- function(list_url) {
   unname(all_urls[keep])
 }
 
+# ------------------------------------------- الصيغة القديمة details
+
+# الموقع يحتفظ بأرشيفه القديم بروابط الشكل /details?p=12918 وهي الغالبية
+# العظمى من خريطة الموقع. اللوائح والأنظمة القديمة موجودة هناك، ولا تظهر
+# تحت /decisions-and-regulations إلا الحديثة منها.
+links_from_details <- function(list_url) {
+  parts <- xml2::url_parse(list_url)
+  origin <- paste0(parts$scheme, "://", parts$server)
+
+  candidates <- paste0(origin, c("/sitemap_0.xml", "/sitemap.xml"))
+  robots <- tryCatch(fetch_html(paste0(origin, "/robots.txt"), tries = 2),
+                     error = function(e) "")
+  if (nzchar(robots)) {
+    found <- stringr::str_match_all(robots, "(?i)sitemap:\\s*(\\S+)")[[1]]
+    if (nrow(found) > 0) candidates <- unique(c(found[, 2], candidates))
+  }
+
+  urls <- character(0)
+  for (cand in candidates) {
+    urls <- unique(c(urls, collect_sitemap_urls(cand)))
+  }
+  out <- grep("details", urls, value = TRUE)
+  message(sprintf("روابط الأرشيف القديم (details): %d", length(out)))
+  out
+}
+
+# عبارات لا تكاد تخلو منها لائحة أو نظام أو قرار، ولا تظهر في الأخبار
+REG_MARKERS <- c(
+  "يقرر ما يلي", "إن مجلس الوزراء", "بعد الاطلاع على", "رسمنا بما هو آت",
+  "يرسم بما هو آت", "المادة الأولى", "المادة الثانية", "اللائحة التنفيذية",
+  "بناءً على ما عرضه", "وبعد الاطلاع", "يُعمل بهذا النظام", "أحكام هذا النظام"
+)
+
+# عناوين صفحات ليست لوائح (فهارس أعداد الجريدة، الأخبار)
+NOT_REG_TITLES <- c("^العدد\\s*[0-9]", "^عدد\\s*[0-9]")
+
+# هل السجل المستخرَج لائحة/نظام/قرار فعلًا؟
+#
+# الصفحات الحديثة (/decisions-and-regulations/) تحمل رقمًا في
+# p.article-subtitle، أما صفحات الأرشيف القديم (/details?p=) فلا تحمله
+# إطلاقًا - لذا لا يصح الاعتماد على الرقم وحده، ونفحص نص المحتوى.
+is_regulation <- function(rec) {
+  if (is.null(rec)) return(FALSE)
+
+  title <- rec$title %||% NA_character_
+  if (!is.na(title)) {
+    for (pat in NOT_REG_TITLES) if (grepl(pat, title)) return(FALSE)
+  }
+
+  # الصيغة الحديثة: رقم صريح في العنوان الفرعي
+  num <- rec$number %||% NA_character_
+  if (!is.na(num) && nzchar(num)) return(TRUE)
+
+  # الأرشيف القديم: نستدل بعبارات النصوص النظامية
+  body <- paste(rec$content_text %||% "", rec$subtitle %||% "")
+  if (!nzchar(trimws(body))) return(FALSE)
+  any(vapply(REG_MARKERS, function(m) grepl(m, body, fixed = TRUE), logical(1)))
+}
+
 # ------------------------------------------------- المسح بالأرقام
 
 # صفحات التفاصيل تحمل أرقامًا متسلسلة (.../decisions-and-regulations/4001678).
@@ -491,16 +550,19 @@ scrape_uqn <- function(section = "rules",
                        limit = 0,
                        delay = 1,
                        engine = c("http", "chromote"),
-                       discover = c("auto", "ids", "sitemap", "pages"),
+                       discover = c("auto", "details", "ids", "sitemap", "pages"),
                        resume = TRUE,
                        id_from = NULL,
                        id_to = NULL,
                        id_pad = 50,
+                       only_regulations = NULL,
                        list_only = FALSE,
                        out = NULL) {
 
   engine <- match.arg(engine)
   discover <- match.arg(discover)
+  # في وضع details نمسح الأرشيف كاملًا، فالفلترة بالمحتوى ضرورية
+  if (is.null(only_regulations)) only_regulations <- (discover == "details")
   getter <- if (engine == "chromote") fetch_html_chromote else fetch_html
 
   if (is.null(url)) {
@@ -571,7 +633,12 @@ scrape_uqn <- function(section = "rules",
     }
   }
 
-  # --- (3) المسح بالأرقام: يغطي ما تفوّته الخريطة و AJAX
+  # --- (3) الأرشيف القديم: يغطي اللوائح التي لا تظهر بالصيغة الحديثة
+  if (discover == "details") {
+    links <- unique(c(links, links_from_details(url)))
+  }
+
+  # --- (4) المسح بالأرقام: يغطي ما تفوّته الخريطة و AJAX
   if (discover == "ids") {
     links <- links_from_ids(links, from = id_from, to = id_to,
                             pad = id_pad)
@@ -627,6 +694,8 @@ scrape_uqn <- function(section = "rules",
   }
 
   todo <- setdiff(links, c(done, skipped))
+  empty_n <- 0L      # سجلات نجح عنوانها وفشل استخراج نصها
+  warned <- FALSE
   if (length(todo) == 0) {
     message("كل العناصر مسحوبة مسبقًا - لا شيء جديد.")
     return(invisible(items))
@@ -646,7 +715,9 @@ scrape_uqn <- function(section = "rules",
     } else {
       record <- tryCatch({
         rec <- parse_detail(html_txt, link)
-        if (is.na(rec$title)) NULL else rec
+        if (is.na(rec$title)) NULL
+        else if (only_regulations && !is_regulation(rec)) NULL  # خبر/إعلان
+        else rec
       }, error = function(e) {
         list(url = link, error = conditionMessage(e))
       })
@@ -656,15 +727,24 @@ scrape_uqn <- function(section = "rules",
       } else {
         record$order <- length(items) + 1
         items[[length(items) + 1]] <- record
+        if (!nzchar(record$content_text %||% "")) empty_n <- empty_n + 1L
         message(sprintf("[%d/%d] (%d) %s", i, length(todo), length(items),
                         record$title %||% link))
+
+        # إنذار مبكر: لو كل ما جُمع بلا نص فالمشكلة في بنية الصفحة
+        if (!warned && length(items) >= 10 && empty_n == length(items)) {
+          warning("أول 10 عناصر بلا نص - بنية الصفحات مختلفة. أوقف ",
+                  "التنفيذ وراجع المحدّدات.", call. = FALSE, immediate. = TRUE)
+          warned <- TRUE
+        }
       }
     }
 
     if (i %% 25 == 0) {
       save_json(items, skipped)
-      message(sprintf("--- التقدّم: %d عنصر، %d متخطّى، %d متبقٍ ---",
-                      length(items), length(skipped), length(todo) - i))
+      message(sprintf("--- التقدّم: %d لائحة، %d مستبعد، %d متبقٍ%s ---",
+                      length(items), length(skipped), length(todo) - i,
+                      if (empty_n > 0) sprintf("، %d بلا نص", empty_n) else ""))
     }
     Sys.sleep(delay)
   }

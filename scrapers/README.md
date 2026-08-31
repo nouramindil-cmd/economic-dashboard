@@ -1,6 +1,6 @@
 # سحب بيانات بوابة أم القرى (uqn.gov.sa)
 
-سكربت لسحب **اللوائح والأنظمة** و**قرارات مجلس الوزراء** من بوابة أم القرى
+سكربت (بنسختين: **Python** و **R**) لسحب **اللوائح والأنظمة** و**قرارات مجلس الوزراء** من بوابة أم القرى
 وإخراجها في ملف JSON.
 
 ## التثبيت
@@ -44,6 +44,64 @@ python scrapers/uqn_scraper.py --section decisions --limit 12 -o data/uqn_decisi
 ```bash
 pip install playwright && playwright install chromium
 python scrapers/uqn_scraper.py --section rules --all --engine playwright -o data/uqn_rules.json
+```
+
+## نسخة R (لمستخدمي RStudio)
+
+الملف `scrapers/uqn_scraper.R` يعطي نفس المخرجات تمامًا.
+
+### ١. تثبيت الحزم (مرة واحدة)
+
+```r
+install.packages(c("rvest", "xml2", "httr2", "jsonlite", "stringr"))
+```
+
+> إذا فشل تثبيت `httr2` فالسكربت يعمل بـ `httr` تلقائيًا:
+> `install.packages("httr")`
+
+### ٢. التشغيل
+
+مهم: استخدم `encoding = "UTF-8"` مع `source` حتى تُقرأ النصوص العربية صحيحة.
+
+```r
+setwd("مسار/مجلد/المشروع")
+source("scrapers/uqn_scraper.R", encoding = "UTF-8")
+
+# كل اللوائح والأنظمة
+scrape_uqn(section = "rules", all_pages = TRUE, out = "data/uqn_rules.json")
+
+# أول 12 قرارًا من قرارات مجلس الوزراء
+scrape_uqn(section = "decisions", limit = 12, out = "data/uqn_decisions.json")
+
+# تشخيص: طباعة الروابط فقط
+scrape_uqn(section = "rules", list_only = TRUE)
+
+# إذا كانت الصفحة مبنية بجافاسكربت
+install.packages("chromote")
+scrape_uqn(section = "rules", all_pages = TRUE, engine = "chromote",
+           out = "data/uqn_rules.json")
+```
+
+### معاملات `scrape_uqn()`
+
+| المعامل | الوصف |
+|---|---|
+| `section` | `"rules"` اللوائح والأنظمة، `"decisions"` قرارات مجلس الوزراء |
+| `url` | رابط قائمة مخصص يتجاوز `section` |
+| `all_pages` | `TRUE` للمرور على كل الصفحات |
+| `pages` | عدد صفحات القائمة إذا لم تستخدم `all_pages` |
+| `limit` | حد أقصى لعدد العناصر (0 = بلا حد) |
+| `engine` | `"http"` أو `"chromote"` |
+| `delay` | ثوانٍ بين الطلبات |
+| `list_only` | `TRUE` لطباعة الروابط فقط |
+| `out` | مسار ملف JSON الناتج |
+
+الدالة تُرجع البيانات أيضًا داخل R، فتقدر تحوّلها لجدول:
+
+```r
+items <- scrape_uqn(section = "rules", all_pages = TRUE)
+df <- do.call(rbind, lapply(items, function(x) data.frame(
+  number = x$number %||% NA, title = x$title, stringsAsFactors = FALSE)))
 ```
 
 ## صيغة المخرجات

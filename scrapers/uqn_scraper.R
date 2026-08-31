@@ -431,6 +431,11 @@ refilter_json <- function(path, out = NULL, dry_run = FALSE,
   if (is.null(out)) out <- path
   d$items <- items[keep]
   d$count <- sum(keep)
+
+  # روابط المستبعَد تُضاف إلى skipped حتى لا يُعاد جلبها عند الاستئناف
+  rej_urls <- vapply(items[!keep], function(x) x$url %||% "", character(1))
+  rej_urls <- rej_urls[nzchar(rej_urls)]
+  d$skipped <- I(unique(c(unlist(d$skipped %||% character(0)), rej_urls)))
   d$rejected <- I(vapply(items[!keep],
                          function(x) x$title %||% x$url %||% "", character(1)))
   con <- file(out, open = "w", encoding = "UTF-8")

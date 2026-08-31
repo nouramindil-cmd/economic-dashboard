@@ -405,29 +405,64 @@ collect_links_browser <- function(list_url, max_pages = 200,
   links
 }
 
-# أداة تشخيص: تعرض عناصر الترقيم الحقيقية في الصفحة
-inspect_pager <- function(list_url = paste0(BASE, SECTIONS$rules)) {
+# أداة تشخيص: تعرض شريط الترقيم كاملًا - نصّه وأرقامه وحالة أزراره.
+# تكشف عدد صفحات القسم الحقيقي، وما إذا كان زر "التالي" معطّلًا.
+inspect_pager <- function(list_url = paste0(BASE, SECTIONS$rules), wait = 8) {
   .uqn_require("chromote")
   b <- chromote::ChromoteSession$new()
   on.exit(try(b$close(), silent = TRUE), add = TRUE)
   b$Page$navigate(list_url)
-  Sys.sleep(7)
+  Sys.sleep(wait)
+
   js <- '(function(){
-    var out=[], seen={};
-    var all=Array.prototype.slice.call(
-      document.querySelectorAll("a,button,li,span,div"));
-    all.forEach(function(e){
-      var t=e.textContent.trim();
-      if(/^[0-9]{1,3}$/.test(t) && e.children.length===0 && e.offsetParent!==null){
-        var k=e.tagName+String(e.className||"");
-        if(seen[k]) return; seen[k]=1;
-        out.push(t+" | "+e.tagName+" | class="+String(e.className||"-")+
-                 " | href="+(e.getAttribute("href")||"-")+
-                 " | onclick="+(e.getAttribute("onclick")||"-")+
-                 " | parent="+String(e.parentElement?e.parentElement.className:"-").slice(0,40));
+    var out = [];
+    var boxes = Array.prototype.slice.call(document.querySelectorAll(
+      "[class*=pag],[class*=Pag],[class*=pager],nav,ul"));
+
+    out.push("=== نص أشرطة الترقيم ===");
+    boxes.forEach(function(x){
+      var t = x.textContent.replace(/\\s+/g," ").trim();
+      if (t.length > 0 && t.length < 250 && /[0-9]/.test(t) &&
+          x.offsetParent !== null) {
+        out.push("[" + x.tagName + "." + String(x.className||"-").slice(0,30) +
+                 "] " + t);
       }
     });
-    return out.slice(0,20).join("\n");
+
+    out.push("");
+    out.push("=== الأرقام الظاهرة وحالتها ===");
+    var seen = {};
+    boxes.forEach(function(box){
+      Array.prototype.slice.call(box.querySelectorAll("a,button,li,span"))
+        .forEach(function(e){
+          var t = e.textContent.trim();
+          if (e.children.length === 0 && e.offsetParent !== null &&
+              /^[0-9]{1,4}$/.test(t) && !seen[t]) {
+            seen[t] = 1;
+            out.push(t + " -> " + e.tagName +
+                     " class=" + String(e.className||"-").slice(0,30) +
+                     " href=" + (e.getAttribute("href")||"-"));
+          }
+        });
+    });
+
+    out.push("");
+    out.push("=== أزرار التنقل (غير رقمية) ===");
+    boxes.forEach(function(box){
+      Array.prototype.slice.call(box.querySelectorAll("a,button,li"))
+        .forEach(function(e){
+          var t = e.textContent.trim();
+          if (/^[0-9]*$/.test(t) && t !== "") return;
+          if (e.offsetParent === null) return;
+          var cls = String(e.className||"-");
+          if (!/pag|next|prev|arrow|nav/i.test(cls + " " + t) ) return;
+          out.push("<" + t.slice(0,20) + "> -> " + e.tagName +
+                   " class=" + cls.slice(0,40) +
+                   " disabled=" + (e.hasAttribute("disabled") ||
+                                   /disab|inactive/i.test(cls)));
+        });
+    });
+    return out.slice(0, 60).join("\n");
   })()'
   cat(b$Runtime$evaluate(js)$result$value, "\n")
   invisible(NULL)

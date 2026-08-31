@@ -214,7 +214,10 @@ extract_item_links <- function(html_txt, list_url) {
 # كل الصيغ المحتملة لرابط الصفحة رقم n: معاملات استعلام ومسارات
 page_url_builders <- function(list_url) {
   base_path <- sub("/$", "", list_url)
-  params <- c("page", "pageNumber", "pageIndex", "PageNumber", "Page",
+  # pgno هو ما يستخدمه الموقع فعليًا (رُصد في روابط شريط الترقيم)،
+  # لذا يُجرّب أولًا؛ والبقية احتياط لو تغيّر الموقع.
+  params <- c("pgno", "pgNo", "PgNo", "pageno",
+              "page", "pageNumber", "pageIndex", "PageNumber", "Page",
               "pageNo", "pageNum", "p", "pg", "start", "offset")
 
   builders <- lapply(params, function(prm) {

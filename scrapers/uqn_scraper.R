@@ -31,6 +31,8 @@
   stop('ينقصك تثبيت حزمة الطلبات:\n  install.packages("httr2")', call. = FALSE)
 }
 
+`%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+
 BASE <- "https://www.uqn.gov.sa"
 
 SECTIONS <- list(
@@ -214,6 +216,65 @@ detect_page_param <- function(getter, list_url, first_links, delay = 1) {
   NULL
 }
 
+# ---------------------------------------------------- خريطة الموقع
+
+# قراءة روابط من ملف sitemap (مع النزول داخل فهارس الخرائط)
+collect_sitemap_urls <- function(sitemap_url, depth = 0, max_depth = 3) {
+  txt <- tryCatch(fetch_html(sitemap_url, tries = 2), error = function(e) NULL)
+  if (is.null(txt)) return(character(0))
+  doc <- tryCatch(xml2::read_xml(txt), error = function(e) NULL)
+  if (is.null(doc)) return(character(0))
+
+  locs <- xml2::xml_text(xml2::xml_find_all(doc, "//*[local-name()='loc']"))
+  locs <- trimws(locs)
+  if (length(locs) == 0) return(character(0))
+
+  # إذا كان الملف فهرس خرائط، ننزل داخل كل خريطة
+  if (identical(xml2::xml_name(xml2::xml_root(doc)), "sitemapindex") &&
+      depth < max_depth) {
+    out <- character(0)
+    for (u in locs) {
+      out <- c(out, collect_sitemap_urls(u, depth + 1, max_depth))
+    }
+    return(unique(out))
+  }
+  unique(locs)
+}
+
+# البحث عن كل روابط الأنظمة/القرارات عبر خريطة الموقع
+links_from_sitemap <- function(list_url) {
+  parts <- xml2::url_parse(list_url)
+  origin <- paste0(parts$scheme, "://", parts$server)
+
+  candidates <- paste0(origin, c("/sitemap.xml", "/sitemap_index.xml",
+                                 "/sitemap-index.xml", "/sitemap/sitemap.xml"))
+
+  # robots.txt غالبًا يشير إلى مكان الخريطة
+  robots <- tryCatch(fetch_html(paste0(origin, "/robots.txt"), tries = 2),
+                     error = function(e) "")
+  if (nzchar(robots)) {
+    found <- stringr::str_match_all(robots, "(?i)sitemap:\\s*(\\S+)")[[1]]
+    if (nrow(found) > 0) candidates <- unique(c(found[, 2], candidates))
+  }
+
+  all_urls <- character(0)
+  for (cand in candidates) {
+    urls <- collect_sitemap_urls(cand)
+    if (length(urls) > 0) {
+      message(sprintf("خريطة الموقع %s: %d رابط", cand, length(urls)))
+      all_urls <- unique(c(all_urls, urls))
+    }
+  }
+  if (length(all_urls) == 0) return(character(0))
+
+  keep <- vapply(all_urls, function(u) {
+    path <- sub("/$", "", xml2::url_parse(u)$path)
+    is_item_path(path, sub("/$", "", xml2::url_parse(list_url)$path))
+  }, logical(1))
+
+  unname(all_urls[keep])
+}
+
 # أداة تشخيص: تطبع عناصر الترقيم في الصفحة لمعرفة آلية التنقل
 diagnose_uqn <- function(section = "rules", url = NULL) {
   if (is.null(url)) url <- paste0(BASE, SECTIONS[[section]])
@@ -372,10 +433,13 @@ scrape_uqn <- function(section = "rules",
                        limit = 0,
                        delay = 1,
                        engine = c("http", "chromote"),
+                       discover = c("auto", "sitemap", "pages"),
+                       resume = TRUE,
                        list_only = FALSE,
                        out = NULL) {
 
   engine <- match.arg(engine)
+  discover <- match.arg(discover)
   getter <- if (engine == "chromote") fetch_html_chromote else fetch_html
 
   if (is.null(url)) {
@@ -388,32 +452,48 @@ scrape_uqn <- function(section = "rules",
 
   max_pages <- if (all_pages) 1e6 else max(1, pages)
 
-  # --- الصفحة الأولى
-  first_links <- extract_item_links(getter(url), url)
-  message(sprintf("الصفحة 1: %d رابط", length(first_links)))
-  links <- first_links
+  links <- character(0)
 
-  need_more <- (all_pages || max_pages > 1) &&
-    (limit == 0 || length(links) < limit) && length(first_links) > 0
-
-  # --- بقية الصفحات (بعد اكتشاف آلية الترقيم)
-  if (need_more) {
-    param <- detect_page_param(getter, url, first_links, delay)
-    if (is.null(param)) {
-      message("تعذّر اكتشاف آلية الترقيم - سيُكتفى بالصفحة الأولى.\n",
-              "شغّل diagnose_uqn() وأرسل المخرجات لتحديد الآلية.")
+  # --- (1) خريطة الموقع: أسرع وأشمل طريقة لجلب كل العناصر دفعة واحدة
+  if (discover %in% c("auto", "sitemap")) {
+    links <- tryCatch(links_from_sitemap(url), error = function(e) character(0))
+    if (length(links) > 0) {
+      message(sprintf("عبر خريطة الموقع: %d عنصر", length(links)))
+    } else if (discover == "sitemap") {
+      stop("خريطة الموقع لا تحتوي على عناصر. جرّب discover = \"pages\"",
+           call. = FALSE)
     } else {
-      page <- 2
-      while (page <= max_pages) {
-        found <- extract_item_links(getter(add_param(url, param, page)), url)
-        fresh <- setdiff(found, links)
-        message(sprintf("الصفحة %d: %d رابط (%d جديد)",
-                        page, length(found), length(fresh)))
-        if (length(fresh) == 0) break
-        links <- c(links, fresh)
-        if (limit > 0 && length(links) >= limit) break
-        page <- page + 1
-        Sys.sleep(delay)
+      message("لا توجد خريطة موقع مفيدة - سنتنقل بين الصفحات.")
+    }
+  }
+
+  # --- (2) التنقل بين صفحات القائمة
+  if (length(links) == 0) {
+    first_links <- extract_item_links(getter(url), url)
+    message(sprintf("الصفحة 1: %d رابط", length(first_links)))
+    links <- first_links
+
+    need_more <- (all_pages || max_pages > 1) &&
+      (limit == 0 || length(links) < limit) && length(first_links) > 0
+
+    if (need_more) {
+      param <- detect_page_param(getter, url, first_links, delay)
+      if (is.null(param)) {
+        message("تعذّر اكتشاف آلية الترقيم.\n",
+                "جرّب engine = \"chromote\" أو شغّل diagnose_uqn().")
+      } else {
+        page <- 2
+        while (page <= max_pages) {
+          found <- extract_item_links(getter(add_param(url, param, page)), url)
+          fresh <- setdiff(found, links)
+          message(sprintf("الصفحة %d: %d رابط (%d جديد)",
+                          page, length(found), length(fresh)))
+          if (length(fresh) == 0) break
+          links <- c(links, fresh)
+          if (limit > 0 && length(links) >= limit) break
+          page <- page + 1
+          Sys.sleep(delay)
+        }
       }
     }
   }
@@ -428,45 +508,70 @@ scrape_uqn <- function(section = "rules",
     stop('لم يُعثر على روابط. جرّب engine = "chromote"', call. = FALSE)
   }
 
-  # --- سحب صفحات التفاصيل
-  items <- vector("list", length(links))
-  for (i in seq_along(links)) {
-    link <- links[i]
-    record <- tryCatch({
-      rec <- parse_detail(getter(link), link)
-      rec$order <- i
-      message(sprintf("[%d/%d] %s", i, length(links),
-                      if (is.na(rec$title)) link else rec$title))
-      rec
-    }, error = function(e) {
-      message(sprintf("[%d/%d] فشل %s : %s", i, length(links),
-                      link, conditionMessage(e)))
-      list(url = link, order = i, error = conditionMessage(e))
-    })
-    items[[i]] <- record
-    Sys.sleep(delay)
-  }
-
-  # --- الحفظ في JSON
   out_dir <- dirname(out)
   if (nzchar(out_dir) && !dir.exists(out_dir)) {
     dir.create(out_dir, recursive = TRUE)
   }
 
-  payload <- list(
-    source_url = url,
-    section    = section,
-    scraped_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
-    count      = length(items),
-    items      = items
-  )
+  save_json <- function(items) {
+    payload <- list(
+      source_url = url,
+      section    = section,
+      scraped_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+      count      = length(items),
+      items      = items
+    )
+    json <- jsonlite::toJSON(payload, auto_unbox = TRUE, pretty = TRUE,
+                             null = "null", na = "null")
+    con <- file(out, open = "w", encoding = "UTF-8")
+    on.exit(close(con), add = TRUE)
+    writeLines(json, con, useBytes = TRUE)
+  }
 
-  json <- jsonlite::toJSON(payload, auto_unbox = TRUE, pretty = TRUE,
-                           null = "null", na = "null")
-  con <- file(out, open = "w", encoding = "UTF-8")
-  on.exit(close(con), add = TRUE)
-  writeLines(jsonlite::prettify(json), con, useBytes = TRUE)
+  # --- استئناف: تخطّي ما سُحب سابقًا إذا كان الملف موجودًا
+  items <- list()
+  done <- character(0)
+  if (resume && file.exists(out)) {
+    prev <- tryCatch(jsonlite::fromJSON(out, simplifyVector = FALSE),
+                     error = function(e) NULL)
+    if (!is.null(prev$items) && length(prev$items) > 0) {
+      items <- prev$items
+      done <- vapply(items, function(x) x$url %||% "", character(1))
+      message(sprintf("استئناف: %d عنصر محفوظ مسبقًا سيُتخطى", length(done)))
+    }
+  }
 
+  todo <- setdiff(links, done)
+  if (length(todo) == 0) {
+    message("كل العناصر مسحوبة مسبقًا - لا شيء جديد.")
+    return(invisible(items))
+  }
+
+  # --- سحب صفحات التفاصيل
+  for (i in seq_along(todo)) {
+    link <- todo[i]
+    record <- tryCatch({
+      rec <- parse_detail(getter(link), link)
+      rec$order <- length(items) + 1
+      message(sprintf("[%d/%d] %s", i, length(todo),
+                      if (is.na(rec$title)) link else rec$title))
+      rec
+    }, error = function(e) {
+      message(sprintf("[%d/%d] فشل %s : %s", i, length(todo),
+                      link, conditionMessage(e)))
+      list(url = link, order = length(items) + 1, error = conditionMessage(e))
+    })
+    items[[length(items) + 1]] <- record
+
+    # حفظ دوري حتى لا يضيع التقدّم إذا انقطع التنفيذ
+    if (i %% 25 == 0) {
+      save_json(items)
+      message(sprintf("--- حُفظ التقدّم: %d عنصر ---", length(items)))
+    }
+    Sys.sleep(delay)
+  }
+
+  save_json(items)
   message(sprintf("تم الحفظ في %s (%d عنصر)", out, length(items)))
   invisible(items)
 }

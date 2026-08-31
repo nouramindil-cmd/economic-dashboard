@@ -204,7 +204,14 @@ extract_item_links <- function(html_txt, list_url) {
     if (nzchar(p$server) && p$server != host) next
     path <- sub("/$", "", p$path)
     if (!nzchar(path) || path == list_path) next
-    if (!is_item_path(path, list_path)) next
+
+    # الصيغة القديمة لصفحات الأرشيف: /details?p=23463
+    # رقمها في الاستعلام لا في المسار، فلا يلتقطها is_item_path
+    query <- p$query
+    legacy <- grepl("/details", path, fixed = TRUE) &&
+      !is.na(query) && grepl("(^|&)p=[0-9]+", query)
+
+    if (!legacy && !is_item_path(path, list_path)) next
     key <- sub("#.*$", "", abs_url)
     if (!(key %in% links)) links <- c(links, key)
   }

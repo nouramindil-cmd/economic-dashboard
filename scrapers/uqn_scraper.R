@@ -303,55 +303,79 @@ collect_links_browser <- function(list_url, max_pages = 200,
 
   # يضغط رقم الصفحة داخل حاوية ترقيم، وإلا زر "التالي"،
   # ويُرجع وصف ما ضغطه للتشخيص
-  click_js <- '(function(n){
-    var vis = function(e){ return e.offsetParent !== null; };
+  # الأولوية لزر "التالي": شريط الترقيم يعرض نافذة أرقام محدودة
+  # (1..15 مثلًا)، فالضغط على رقم الصفحة يتوقف عند حافة النافذة، وقد
+  # يقود إلى صفحة غير المقصودة. زر التالي يتقدّم دائمًا خطوة واحدة.
+  click_js <- '(function(n, cur){
+    var vis  = function(e){ return e.offsetParent !== null; };
     var leaf = function(e){ return e.children.length === 0; };
-    var desc = function(e,how){ return how + "|" + e.tagName + "|" +
-      String(e.className||"").slice(0,40); };
+    var sig  = function(e){
+      return (e.getAttribute("aria-label")||"") + " " +
+             (e.getAttribute("title")||"") + " " +
+             (e.getAttribute("rel")||"") + " " +
+             String(e.className||"") + " " + e.textContent.trim();
+    };
+    var NEXT = /next|التالي|اللاحق|\u00bb|\u203a|\u2192|\u276f/i;
+    var PREV = /prev|السابق|first|last|\u00ab|\u2039|\u2190|\u276e/i;
+    var desc = function(e,how){
+      return how + "|" + e.tagName + "|" +
+             String(e.className||"-").slice(0,30); };
 
     var boxes = Array.prototype.slice.call(document.querySelectorAll(
       "[class*=pag],[class*=Pag],[class*=pager],nav,ul"));
 
-    // 1) رقم الصفحة داخل حاوية ترقيم
+    // 1) زر التالي داخل شريط الترقيم
     for (var i = 0; i < boxes.length; i++) {
       var kids = Array.prototype.slice.call(
-        boxes[i].querySelectorAll("a,button,li,span"));
+        boxes[i].querySelectorAll("a,button,li"));
       for (var j = 0; j < kids.length; j++) {
-        var e = kids[j];
-        if (leaf(e) && vis(e) && e.textContent.trim() === String(n)) {
+        var e = kids[j], t = e.textContent.trim();
+        if (!vis(e) || /^[0-9]+$/.test(t)) continue;
+        var sg = sig(e);
+        if (NEXT.test(sg) && !PREV.test(sg)) {
           e.scrollIntoView({block:"center"}); e.click();
-          return desc(e,"num-in-pager");
+          return desc(e,"next");
         }
       }
     }
-    // 2) زر التالي
-    var all = Array.prototype.slice.call(
-      document.querySelectorAll("a,button,li,span"));
-    for (var k = 0; k < all.length; k++) {
-      var x = all[k];
-      var sig = (x.getAttribute("aria-label")||"") + " " +
-                String(x.className||"") + " " + x.textContent.trim();
-      if (vis(x) && /next|التالي|\u00bb|\u203a/i.test(sig) &&
-          !/prev|السابق/i.test(sig)) {
-        x.scrollIntoView({block:"center"}); x.click();
-        return desc(x,"next");
+
+    // 2) رقم الصفحة المطلوب داخل شريط الترقيم
+    for (var a = 0; a < boxes.length; a++) {
+      var ks = Array.prototype.slice.call(
+        boxes[a].querySelectorAll("a,button,li,span"));
+      for (var b = 0; b < ks.length; b++) {
+        var x = ks[b];
+        if (leaf(x) && vis(x) && x.textContent.trim() === String(n)) {
+          x.scrollIntoView({block:"center"}); x.click();
+          return desc(x,"num");
+        }
       }
     }
-    // 3) أي عنصر ورقي نصه رقم الصفحة
-    for (var m = 0; m < all.length; m++) {
-      var y = all[m];
-      if (leaf(y) && vis(y) && y.textContent.trim() === String(n)) {
-        y.scrollIntoView({block:"center"}); y.click();
-        return desc(y,"num-anywhere");
+
+    // 3) أكبر رقم ظاهر يفوق الصفحة الحالية (لتخطي حافة النافذة)
+    var best = null, bestVal = cur;
+    for (var c = 0; c < boxes.length; c++) {
+      var kk = Array.prototype.slice.call(
+        boxes[c].querySelectorAll("a,button,li,span"));
+      for (var d = 0; d < kk.length; d++) {
+        var y = kk[d], tt = y.textContent.trim();
+        if (leaf(y) && vis(y) && /^[0-9]{1,4}$/.test(tt)) {
+          var v = parseInt(tt, 10);
+          if (v > bestVal) { bestVal = v; best = y; }
+        }
       }
+    }
+    if (best) {
+      best.scrollIntoView({block:"center"}); best.click();
+      return desc(best,"jump-" + bestVal);
     }
     return "none";
-  })(%d)'
+  })(%d, %d)'
 
   page <- 2
   while (page <= max_pages) {
     before <- links
-    what <- eval_js(sprintf(click_js, page))
+    what <- eval_js(sprintf(click_js, page, page - 1L))
     if (is.null(what) || identical(what, "none")) {
       message(sprintf("صفحة %d: لا يوجد زر للانتقال - انتهت القائمة.", page))
       break

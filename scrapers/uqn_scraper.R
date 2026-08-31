@@ -274,55 +274,139 @@ detect_page_size <- function(getter, list_url, first_links, delay = 0.5) {
 
 # المرور على صفحات القائمة بمتصفح حقيقي.
 # يعمل مهما كانت آلية الترقيم (AJAX أو غيره) لأنه يضغط الأزرار فعليًا.
-collect_links_browser <- function(list_url, max_pages = 200, wait = 2) {
+#
+# ملاحظتان تعلّمناهما من الموقع:
+#  - البحث عن أي عنصر نصه "2" يلتقط أرقامًا غير أزرار الترقيم، لذا
+#    نبدأ بحاويات الترقيم ثم نتوسّع.
+#  - المحتوى يُحمَّل عبر AJAX بعد الضغط، فلا يصح انتظار مدة ثابتة؛
+#    ننتظر حتى تتغيّر الروابط فعلًا.
+collect_links_browser <- function(list_url, max_pages = 200,
+                                  timeout = 15, step = 0.5) {
   .uqn_require("chromote")
   b <- chromote::ChromoteSession$new()
   on.exit(try(b$close(), silent = TRUE), add = TRUE)
 
-  read_html_now <- function() {
+  html_now <- function() {
     b$Runtime$evaluate("document.documentElement.outerHTML")$result$value
+  }
+  eval_js <- function(js) {
+    tryCatch(b$Runtime$evaluate(js)$result$value, error = function(e) NULL)
   }
 
   b$Page$navigate(list_url)
-  Sys.sleep(wait + 2)
-  links <- extract_item_links(read_html_now(), list_url)
+  Sys.sleep(6)
+  links <- extract_item_links(html_now(), list_url)
   message(sprintf("صفحة 1: %d رابط", length(links)))
+  if (length(links) == 0) {
+    stop("لم تظهر أي عناصر في الصفحة الأولى.", call. = FALSE)
+  }
 
-  click_js <- "(function(n){
-    var all = Array.prototype.slice.call(
-      document.querySelectorAll('a,button,li,span,div'));
+  # يضغط رقم الصفحة داخل حاوية ترقيم، وإلا زر "التالي"،
+  # ويُرجع وصف ما ضغطه للتشخيص
+  click_js <- '(function(n){
     var vis = function(e){ return e.offsetParent !== null; };
-    var num = all.filter(function(e){
-      return e.textContent.trim() === String(n) && vis(e); });
-    if (num.length) { num[0].click(); return 'num'; }
-    var nx = all.filter(function(e){
-      var s = (e.getAttribute('aria-label')||'') + ' ' +
-              String(e.className||'') + ' ' + e.textContent.trim();
-      return /next|التالي|»|\u203a/i.test(s) && vis(e); });
-    if (nx.length) { nx[0].click(); return 'next'; }
-    return 'none';
-  })(%d)"
+    var leaf = function(e){ return e.children.length === 0; };
+    var desc = function(e,how){ return how + "|" + e.tagName + "|" +
+      String(e.className||"").slice(0,40); };
+
+    var boxes = Array.prototype.slice.call(document.querySelectorAll(
+      "[class*=pag],[class*=Pag],[class*=pager],nav,ul"));
+
+    // 1) رقم الصفحة داخل حاوية ترقيم
+    for (var i = 0; i < boxes.length; i++) {
+      var kids = Array.prototype.slice.call(
+        boxes[i].querySelectorAll("a,button,li,span"));
+      for (var j = 0; j < kids.length; j++) {
+        var e = kids[j];
+        if (leaf(e) && vis(e) && e.textContent.trim() === String(n)) {
+          e.scrollIntoView({block:"center"}); e.click();
+          return desc(e,"num-in-pager");
+        }
+      }
+    }
+    // 2) زر التالي
+    var all = Array.prototype.slice.call(
+      document.querySelectorAll("a,button,li,span"));
+    for (var k = 0; k < all.length; k++) {
+      var x = all[k];
+      var sig = (x.getAttribute("aria-label")||"") + " " +
+                String(x.className||"") + " " + x.textContent.trim();
+      if (vis(x) && /next|التالي|\u00bb|\u203a/i.test(sig) &&
+          !/prev|السابق/i.test(sig)) {
+        x.scrollIntoView({block:"center"}); x.click();
+        return desc(x,"next");
+      }
+    }
+    // 3) أي عنصر ورقي نصه رقم الصفحة
+    for (var m = 0; m < all.length; m++) {
+      var y = all[m];
+      if (leaf(y) && vis(y) && y.textContent.trim() === String(n)) {
+        y.scrollIntoView({block:"center"}); y.click();
+        return desc(y,"num-anywhere");
+      }
+    }
+    return "none";
+  })(%d)'
 
   page <- 2
   while (page <= max_pages) {
-    res <- tryCatch(
-      b$Runtime$evaluate(sprintf(click_js, page))$result$value,
-      error = function(e) "none")
-    if (identical(res, "none")) {
+    before <- links
+    what <- eval_js(sprintf(click_js, page))
+    if (is.null(what) || identical(what, "none")) {
       message(sprintf("صفحة %d: لا يوجد زر للانتقال - انتهت القائمة.", page))
       break
     }
-    Sys.sleep(wait)
-    found <- extract_item_links(read_html_now(), list_url)
-    fresh <- setdiff(found, links)
-    message(sprintf("صفحة %d: %d رابط (%d جديد) | المجموع %d",
-                    page, length(found), length(fresh),
-                    length(links) + length(fresh)))
-    if (length(fresh) == 0) break
+
+    # ننتظر حتى تظهر روابط جديدة، لا مدة ثابتة
+    waited <- 0
+    found <- before
+    repeat {
+      Sys.sleep(step); waited <- waited + step
+      found <- extract_item_links(html_now(), list_url)
+      if (length(setdiff(found, before)) > 0) break
+      if (waited >= timeout) break
+    }
+
+    fresh <- setdiff(found, before)
+    if (length(fresh) == 0) {
+      message(sprintf("صفحة %d: ضُغط [%s] لكن لم يتغيّر المحتوى خلال %g ثانية.",
+                      page, what, timeout))
+      break
+    }
     links <- c(links, fresh)
+    message(sprintf("صفحة %d: %d جديد | المجموع %d  [%s]",
+                    page, length(fresh), length(links), what))
     page <- page + 1
   }
   links
+}
+
+# أداة تشخيص: تعرض عناصر الترقيم الحقيقية في الصفحة
+inspect_pager <- function(list_url = paste0(BASE, SECTIONS$rules)) {
+  .uqn_require("chromote")
+  b <- chromote::ChromoteSession$new()
+  on.exit(try(b$close(), silent = TRUE), add = TRUE)
+  b$Page$navigate(list_url)
+  Sys.sleep(7)
+  js <- '(function(){
+    var out=[], seen={};
+    var all=Array.prototype.slice.call(
+      document.querySelectorAll("a,button,li,span,div"));
+    all.forEach(function(e){
+      var t=e.textContent.trim();
+      if(/^[0-9]{1,3}$/.test(t) && e.children.length===0 && e.offsetParent!==null){
+        var k=e.tagName+String(e.className||"");
+        if(seen[k]) return; seen[k]=1;
+        out.push(t+" | "+e.tagName+" | class="+String(e.className||"-")+
+                 " | href="+(e.getAttribute("href")||"-")+
+                 " | onclick="+(e.getAttribute("onclick")||"-")+
+                 " | parent="+String(e.parentElement?e.parentElement.className:"-").slice(0,40));
+      }
+    });
+    return out.slice(0,20).join("\n");
+  })()'
+  cat(b$Runtime$evaluate(js)$result$value, "\n")
+  invisible(NULL)
 }
 
 # ---------------------------------------------------- خريطة الموقع
